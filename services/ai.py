@@ -88,6 +88,6 @@ async def get_soul_card_reading(name: str, soul_card: dict) -> str:
 Карта судьбы (карта души): {soul_card['name']}
 Значение: {soul_card['upright']}
 
-Расскажи {name} о её карте судьбы от лица Бабушки AIda.
+Расскажи {name} о карте судьбы от лица Бабушки AIda.
 Это очень личное — карта на всю жизнь. Говори глубоко и тепло."""
     return await ask_aida(prompt)

@@ -1,6 +1,7 @@
 from aiogram import Router, F
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
 from aiogram.filters import Command
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 import os
 
 from database.db import (
@@ -15,6 +16,96 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
 
 def is_admin(user_id: int) -> bool:
     return user_id == ADMIN_ID
+
+
+def admin_panel_kb():
+    kb = InlineKeyboardBuilder()
+    kb.button(text="📊 Статистика", callback_data="admin_stats")
+    kb.button(text="👥 Пользователи", callback_data="admin_users")
+    kb.button(text="💳 Платные", callback_data="admin_paying")
+    kb.button(text="🔧 Команды", callback_data="admin_help")
+    kb.button(text="◀️ Главное меню", callback_data="main_menu")
+    kb.adjust(2, 2, 1)
+    return kb.as_markup()
+
+
+@router.callback_query(F.data == "admin_panel")
+async def admin_panel(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer()
+        return
+    await callback.message.edit_text(
+        "🔧 Админ-панель Бабушки AIda\n\n"
+        "Быстрые действия доступны кнопками. Команды с ID пользователя можно отправлять текстом.",
+        reply_markup=admin_panel_kb()
+    )
+
+
+@router.callback_query(F.data == "admin_stats")
+async def admin_stats(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer()
+        return
+    stats = get_stats()
+    await callback.message.edit_text(
+        f"📊 Статистика Бабушки AIda:\n\n"
+        f"👥 Всего пользователей: {stats['total']}\n"
+        f"💳 Платных подписчиков: {stats['paying']}\n"
+        f"🃏 Всего раскладов: {stats['readings']}\n\n"
+        f"💰 Примерный доход: ${stats['paying'] * 6:.0f}/мес",
+        reply_markup=admin_panel_kb()
+    )
+
+
+@router.callback_query(F.data == "admin_users")
+async def admin_users(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer()
+        return
+    stats = get_stats()
+    await callback.message.edit_text(
+        f"👥 Пользователей: {stats['total']}\n"
+        f"💳 Платных: {stats['paying']}\n\n"
+        "Для карточки пользователя отправь:\n"
+        "/user 123456",
+        reply_markup=admin_panel_kb()
+    )
+
+
+@router.callback_query(F.data == "admin_paying")
+async def admin_paying(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer()
+        return
+    users = get_paying_users()
+    if not users:
+        text = "Платных подписчиков пока нет"
+    else:
+        text = "💳 Платные подписчики:\n\n"
+        for u in users[:20]:
+            text += f"• {u['name']} (@{u['username']}) — ID: {u['user_id']}\n"
+    await callback.message.edit_text(text, reply_markup=admin_panel_kb())
+
+
+@router.callback_query(F.data == "admin_help")
+async def admin_help(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer()
+        return
+    await callback.message.edit_text(
+        "🔧 Админ-команды:\n\n"
+        "/stats — статистика\n"
+        "/users — количество пользователей\n"
+        "/paying — список платных\n"
+        "/user 123456 — инфо о пользователе\n"
+        "/give_sub 123456 30 — дать подписку\n"
+        "/give_trials 123456 3 — добавить расклады\n"
+        "/ban 123456 — забанить\n"
+        "/unban 123456 — разбанить\n"
+        "/broadcast текст — всем\n"
+        "/broadcast_paid текст — только платным",
+        reply_markup=admin_panel_kb()
+    )
 
 
 @router.message(Command("stats"))

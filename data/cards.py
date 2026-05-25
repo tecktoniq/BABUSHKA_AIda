@@ -1,4 +1,5 @@
 import random
+from datetime import datetime
 
 # Старшие арканы
 MAJOR_ARCANA = [
@@ -26,6 +27,33 @@ MAJOR_ARCANA = [
     {"id": 21, "name": "Мир", "name_en": "The World", "upright": "завершение, интеграция, успех", "reversed": "незавершённость, стагнация"},
 ]
 
+TAROT_IMAGE_BASE_URL = "https://www.free-tarot-reading.net/img/cards/rider-waite"
+
+MAJOR_IMAGE_SLUGS = {
+    0: "the-fool",
+    1: "the-magician",
+    2: "the-high-priestess",
+    3: "the-empress",
+    4: "the-emperor",
+    5: "the-hierophant",
+    6: "the-lovers",
+    7: "the-chariot",
+    8: "strength",
+    9: "the-hermit",
+    10: "wheel-of-fortune",
+    11: "justice",
+    12: "the-hanged-man",
+    13: "death",
+    14: "temperance",
+    15: "the-devil",
+    16: "the-tower",
+    17: "the-star",
+    18: "the-moon",
+    19: "the-sun",
+    20: "judgement",
+    21: "the-world",
+}
+
 # Масти младших арканов
 SUITS = [
     {"name": "Жезлов", "element": "огонь", "theme": "творчество, энергия, действие"},
@@ -38,32 +66,85 @@ RANKS = ["Туз", "Двойка", "Тройка", "Четвёрка", "Пятё
          "Семёрка", "Восьмёрка", "Девятка", "Десятка",
          "Паж", "Рыцарь", "Королева", "Король"]
 
+RANK_SLUGS = {
+    "Туз": "ace",
+    "Двойка": "two",
+    "Тройка": "three",
+    "Четвёрка": "four",
+    "Пятёрка": "five",
+    "Шестёрка": "six",
+    "Семёрка": "seven",
+    "Восьмёрка": "eight",
+    "Девятка": "nine",
+    "Десятка": "ten",
+    "Паж": "page",
+    "Рыцарь": "knight",
+    "Королева": "queen",
+    "Король": "king",
+}
+
+SUIT_SLUGS = {
+    "Жезлов": "wands",
+    "Кубков": "cups",
+    "Мечей": "swords",
+    "Пентаклей": "pentacles",
+}
+
 # Генерируем все 56 младших арканов
 MINOR_ARCANA = []
-for suit in SUITS:
-    for rank in RANKS:
+for suit_index, suit in enumerate(SUITS):
+    for rank_index, rank in enumerate(RANKS):
         MINOR_ARCANA.append({
+            "id": 22 + suit_index * len(RANKS) + rank_index,
             "name": f"{rank} {suit['name']}",
+            "name_en": f"{RANK_SLUGS[rank].title()} of {SUIT_SLUGS[suit['name']].title()}",
             "upright": f"{suit['theme']}",
             "reversed": f"заблокированная энергия {suit['element']}а",
+            "image_slug": f"{RANK_SLUGS[rank]}-of-{SUIT_SLUGS[suit['name']]}",
         })
+
+for card in MAJOR_ARCANA:
+    card["image_slug"] = MAJOR_IMAGE_SLUGS[card["id"]]
 
 ALL_CARDS = MAJOR_ARCANA + MINOR_ARCANA
 
 
+def get_card_image_url(card: dict) -> str:
+    """URL картинки карты из колоды Rider-Waite."""
+    return f"{TAROT_IMAGE_BASE_URL}/{card['image_slug']}.jpg"
+
+
 def draw_cards(n=3):
-    """Вытащить n случайных карт из колоды"""
+    """Вытащить n случайных карт из колоды без повторов.
+
+    random.sample делает выбор без возвращения: первая карта имеет шанс 1/78,
+    вторая вытягивается из оставшихся 77, третья - из оставшихся 76.
+    Перевёрнутая позиция считается отдельно, шанс 50/50 для каждой карты.
+    """
     drawn = random.sample(ALL_CARDS, n)
     result = []
     for card in drawn:
         is_reversed = random.choice([True, False])
         result.append({
+            "id": card["id"],
             "name": card["name"],
+            "name_en": card.get("name_en", card["name"]),
             "is_reversed": is_reversed,
             "meaning": card["reversed"] if is_reversed else card["upright"],
             "position_label": "перевёрнутая" if is_reversed else "прямая",
+            "image_url": get_card_image_url(card),
         })
     return result
+
+
+def parse_birthdate(birthdate_str):
+    """Вернуть дату рождения из форматов ДД.ММ.ГГГГ, ДД/ММ/ГГГГ, ДД-ММ-ГГГГ."""
+    normalized = birthdate_str.strip().replace("/", ".").replace("-", ".")
+    return datetime.strptime(normalized, "%d.%m.%Y").date()
+
+
+def normalize_birthdate(birthdate_str):
+    return parse_birthdate(birthdate_str).strftime("%d.%m.%Y")
 
 
 def get_soul_card(birthdate_str):
@@ -84,20 +165,25 @@ def get_soul_card(birthdate_str):
 def get_zodiac(birthdate_str):
     """Знак зодиака по дате рождения"""
     try:
-        parts = birthdate_str.split(".")
-        day, month = int(parts[0]), int(parts[1])
+        birthdate = parse_birthdate(birthdate_str)
+        day, month = birthdate.day, birthdate.month
         signs = [
-            (1, 20, "Козерог ♑"), (2, 19, "Водолей ♒"),
-            (3, 20, "Рыбы ♓"), (4, 20, "Овен ♈"),
-            (5, 21, "Телец ♉"), (6, 21, "Близнецы ♊"),
-            (7, 22, "Рак ♋"), (8, 23, "Лев ♌"),
-            (9, 23, "Дева ♍"), (10, 23, "Весы ♎"),
-            (11, 22, "Скорпион ♏"), (12, 22, "Стрелец ♐"),
-            (12, 31, "Козерог ♑"),
+            ((1, 20), "Водолей ♒"),
+            ((2, 19), "Рыбы ♓"),
+            ((3, 21), "Овен ♈"),
+            ((4, 20), "Телец ♉"),
+            ((5, 21), "Близнецы ♊"),
+            ((6, 21), "Рак ♋"),
+            ((7, 23), "Лев ♌"),
+            ((8, 23), "Дева ♍"),
+            ((9, 23), "Весы ♎"),
+            ((10, 23), "Скорпион ♏"),
+            ((11, 22), "Стрелец ♐"),
+            ((12, 22), "Козерог ♑"),
         ]
-        for end_day, end_month, sign in signs:
-            if month < end_month or (month == end_month and day <= end_day):
+        for (start_month, start_day), sign in reversed(signs):
+            if (month, day) >= (start_month, start_day):
                 return sign
         return "Козерог ♑"
-    except:
+    except ValueError:
         return "неизвестен"

@@ -4,6 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 import asyncio
+import logging
 
 from database.db import get_user, is_subscribed, has_trial, use_trial, save_reading
 from data.cards import draw_cards
@@ -11,6 +12,7 @@ from data.phrases import get, SHUFFLING, FIRST_CARD, SECOND_CARD, THIRD_CARD, VE
 from services.ai import interpret_card, get_verdict
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 TOPICS = {
     "love": "💕 На любовь и отношения",
@@ -166,14 +168,22 @@ async def _show_card(msg, state: FSMContext, user, cards: list, index: int):
     question = data.get("question", "")
 
     # Заголовок позиции
-    await msg.answer(get(
-        [FIRST_CARD, SECOND_CARD, THIRD_CARD][index]
-    ) if index > 0 else get(FIRST_CARD))
+    await msg.answer(get([FIRST_CARD, SECOND_CARD, THIRD_CARD][index]))
 
     await asyncio.sleep(0.5)
 
-    # Картинка карты (пока эмодзи — потом заменим на реальные картинки)
     reversed_label = "🔄 Перевёрнутая" if card["is_reversed"] else "⬆️ Прямая"
+    card_title = (
+        f"{position_label}\n\n"
+        f"🃏 {card['name']}\n"
+        f"{reversed_label}"
+    )
+
+    try:
+        await msg.answer_photo(photo=card["image_url"], caption=card_title)
+    except Exception as exc:
+        logger.warning("Failed to send tarot card image %s: %s", card.get("image_url"), exc)
+        await msg.answer(f"{card_title}\n\nКарта: {card['image_url']}")
 
     # AI интерпретация
     interpretation = await interpret_card(
@@ -189,20 +199,13 @@ async def _show_card(msg, state: FSMContext, user, cards: list, index: int):
     interpretations.append(interpretation)
     await state.update_data(interpretations=interpretations, card_index=index + 1)
 
-    text = (
-        f"{position_label}\n\n"
-        f"🃏 {card['name']}\n"
-        f"{reversed_label}\n\n"
-        f"{interpretation}"
-    )
-
     # Кнопка следующего шага
     if index < 2:
         kb = next_card_kb(index + 1)
     else:
         kb = verdict_kb()
 
-    await msg.answer(text, reply_markup=kb)
+    await msg.answer(interpretation, reply_markup=kb)
 
 
 @router.callback_query(F.data.startswith("next_card_"))
@@ -242,9 +245,9 @@ async def show_verdict(callback: CallbackQuery, state: FSMContext):
         user_id=callback.from_user.id,
         topic=topic_label,
         question=question,
-        card1=cards[0]["name"],
-        card2=cards[1]["name"],
-        card3=cards[2]["name"],
+        card1=f"{cards[0]['name']} ({cards[0]['position_label']})",
+        card2=f"{cards[1]['name']} ({cards[1]['position_label']})",
+        card3=f"{cards[2]['name']} ({cards[2]['position_label']})",
         verdict=verdict
     )
 

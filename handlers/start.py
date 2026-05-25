@@ -1,5 +1,5 @@
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import FSInputFile, Message, CallbackQuery
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -8,10 +8,11 @@ import os
 
 from database.db import get_user, create_user, update_user, is_subscribed, has_trial
 from data.phrases import get, WELCOME
-from data.cards import get_zodiac, get_soul_card
+from data.cards import get_zodiac, get_soul_card, normalize_birthdate
 
 router = Router()
 ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
+WELCOME_IMAGE_PATH = "assets/AIDA.jpg"
 
 
 class Onboarding(StatesGroup):
@@ -19,12 +20,14 @@ class Onboarding(StatesGroup):
     waiting_birthdate = State()
 
 
-def main_menu_kb():
+def main_menu_kb(user_id: int | None = None):
     kb = InlineKeyboardBuilder()
     kb.button(text="🃏 Сделать расклад", callback_data="start_reading")
     kb.button(text="⭐ Открыть подписку", callback_data="subscription")
     kb.button(text="📖 Что умеет бабушка?", callback_data="about")
     kb.button(text="⚙️ Мои данные", callback_data="my_data")
+    if user_id == ADMIN_ID:
+        kb.button(text="🔧 Админ-панель", callback_data="admin_panel")
     kb.adjust(1)
     return kb.as_markup()
 
@@ -46,15 +49,19 @@ async def cmd_start(message: Message, state: FSMContext):
 
     # Если уже зарегистрирован — показываем меню
     if user and user["name"]:
+        if user["birthdate"]:
+            zodiac = get_zodiac(user["birthdate"])
+            if zodiac != user["zodiac"]:
+                update_user(user_id, zodiac=zodiac)
         await message.answer(
             f"🔮 С возвращением, {user['name']}!\n\nБабушка AIda рада тебя видеть снова...",
-            reply_markup=main_menu_kb()
+            reply_markup=main_menu_kb(user_id)
         )
         return
 
     # Новый пользователь — онбординг
     await message.answer_photo(
-        photo="https://i.imgur.com/placeholder.jpg",  # заменим на реальное фото
+        photo=FSInputFile(WELCOME_IMAGE_PATH),
         caption=f"{get(WELCOME)}\n\n"
                 f"Я гадаю на картах уже сорок лет.\n"
                 f"Теперь и здесь, дитя моё.\n\n"
@@ -73,8 +80,7 @@ async def got_name(message: Message, state: FSMContext):
     await state.update_data(name=name)
     await message.answer(
         f"{name}... хорошее имя 🕯\n\n"
-        f"Скажи бабушке когда ты родилась?\n"
-        f"Напиши дату рождения:\n"
+        f"Скажи мне свою дату рождения, дитя моё.\n"
         f"(например: 15.03.1990)"
     )
     await state.set_state(Onboarding.waiting_birthdate)
@@ -84,10 +90,10 @@ async def got_name(message: Message, state: FSMContext):
 async def got_birthdate(message: Message, state: FSMContext):
     birthdate = message.text.strip()
 
-    # Простая валидация
-    parts = birthdate.replace("/", ".").replace("-", ".").split(".")
-    if len(parts) != 3:
-        await message.answer("Напиши дату в формате ДД.ММ.ГГГГ, дитя моё... Например: 15.03.1990")
+    try:
+        birthdate = normalize_birthdate(birthdate)
+    except ValueError:
+        await message.answer("Напиши дату в формате ДД.ММ.ГГГГ, дитя моё. Например: 15.03.1990")
         return
 
     data = await state.get_data()
@@ -117,7 +123,7 @@ async def got_birthdate(message: Message, state: FSMContext):
         f"Карта судьбы: {soul_card['name']} 🔮\n\n"
         f"У тебя есть 3 бесплатных расклада.\n"
         f"Потом бабушка попросит немного звёздочек ⭐",
-        reply_markup=main_menu_kb()
+        reply_markup=main_menu_kb(message.from_user.id)
     )
 
 
@@ -145,7 +151,7 @@ async def about(callback: CallbackQuery):
 async def back_to_menu(callback: CallbackQuery):
     await callback.message.edit_text(
         "🔮 Главное меню Бабушки AIda",
-        reply_markup=main_menu_kb()
+        reply_markup=main_menu_kb(callback.from_user.id)
     )
 
 
@@ -155,6 +161,11 @@ async def my_data(callback: CallbackQuery):
     if not user or not user["name"]:
         await callback.answer("Сначала пройди регистрацию!")
         return
+    if user["birthdate"]:
+        zodiac = get_zodiac(user["birthdate"])
+        if zodiac != user["zodiac"]:
+            update_user(callback.from_user.id, zodiac=zodiac)
+            user = get_user(callback.from_user.id)
 
     soul_card_name = "не определена"
     if user["soul_card"] is not None:
