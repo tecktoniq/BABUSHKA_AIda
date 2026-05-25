@@ -1,0 +1,260 @@
+from aiogram import Router, F
+from aiogram.types import CallbackQuery, Message
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+import asyncio
+
+from database.db import get_user, is_subscribed, has_trial, use_trial, save_reading
+from data.cards import draw_cards
+from data.phrases import get, SHUFFLING, FIRST_CARD, SECOND_CARD, THIRD_CARD, VERDICT_INTRO, AFTER_READING
+from services.ai import interpret_card, get_verdict
+
+router = Router()
+
+TOPICS = {
+    "love": "💕 На любовь и отношения",
+    "money": "💰 На деньги и карьеру",
+    "life": "🌙 На ситуацию в жизни",
+    "custom": "✍️ Свой вопрос",
+    "yesno": "🎯 Да или Нет",
+}
+
+POSITIONS = {
+    0: ("🌑 ПРОШЛОЕ", "прошлое"),
+    1: ("🌕 НАСТОЯЩЕЕ", "настоящее"),
+    2: ("✨ БУДУЩЕЕ", "будущее"),
+}
+
+NEXT_CARD_PHRASES = {
+    1: SECOND_CARD,
+    2: THIRD_CARD,
+}
+
+
+class ReadingState(StatesGroup):
+    choosing_topic = State()
+    waiting_question = State()
+    showing_cards = State()
+
+
+def topic_kb():
+    kb = InlineKeyboardBuilder()
+    kb.button(text="💕 На любовь", callback_data="topic_love")
+    kb.button(text="💰 На деньги", callback_data="topic_money")
+    kb.button(text="🌙 На ситуацию", callback_data="topic_life")
+    kb.button(text="✍️ Свой вопрос", callback_data="topic_custom")
+    kb.button(text="◀️ Назад", callback_data="main_menu")
+    kb.adjust(2, 2, 1)
+    return kb.as_markup()
+
+
+def next_card_kb(card_index: int):
+    kb = InlineKeyboardBuilder()
+    if card_index == 1:
+        kb.button(text="🃏 Вытащить вторую карту", callback_data=f"next_card_{card_index}")
+    elif card_index == 2:
+        kb.button(text="🃏 Вытащить третью карту", callback_data=f"next_card_{card_index}")
+    return kb.as_markup()
+
+
+def verdict_kb():
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🔮 Получить вердикт бабушки", callback_data="get_verdict")
+    return kb.as_markup()
+
+
+def after_reading_kb(bot_username: str, user_id: int):
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🔄 Поделиться раскладом", switch_inline_query=f"Я гадала у Бабушки AIda @{bot_username}")
+    kb.button(text="🃏 Новый расклад", callback_data="start_reading")
+    kb.button(text="◀️ Главное меню", callback_data="main_menu")
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def subscription_prompt_kb():
+    kb = InlineKeyboardBuilder()
+    kb.button(text="⭐ Один расклад — 99 Stars", callback_data="buy_single")
+    kb.button(text="💫 Подписка месяц — 399 Stars", callback_data="buy_month")
+    kb.button(text="🌟 3 месяца — 999 Stars (-20%)", callback_data="buy_3months")
+    kb.button(text="◀️ Назад", callback_data="main_menu")
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+@router.callback_query(F.data == "start_reading")
+async def start_reading(callback: CallbackQuery, state: FSMContext):
+    user = get_user(callback.from_user.id)
+    if not user or not user["name"]:
+        await callback.answer("Сначала пройди регистрацию!")
+        return
+
+    # Проверяем доступ
+    if not is_subscribed(callback.from_user.id) and not has_trial(callback.from_user.id):
+        await callback.message.edit_text(
+            "🔒 Бабушка видит больше...\n\n"
+            "Твои бесплатные расклады закончились, дитя моё.\n"
+            "Открой подписку чтобы продолжить 🔮",
+            reply_markup=subscription_prompt_kb()
+        )
+        return
+
+    await callback.message.edit_text(
+        "О чём тревожится твоё сердце? 🔮\n\n"
+        "Выбери тему расклада:",
+        reply_markup=topic_kb()
+    )
+    await state.set_state(ReadingState.choosing_topic)
+
+
+@router.callback_query(F.data.startswith("topic_"))
+async def choose_topic(callback: CallbackQuery, state: FSMContext):
+    topic_key = callback.data.replace("topic_", "")
+    topic_label = TOPICS.get(topic_key, "На ситуацию в жизни")
+
+    await state.update_data(topic_key=topic_key, topic_label=topic_label)
+
+    if topic_key == "custom":
+        await callback.message.edit_text(
+            "🕯 Напиши свой вопрос бабушке...\n\n"
+            "Спрашивай о том, что действительно волнует твоё сердце:"
+        )
+        await state.set_state(ReadingState.waiting_question)
+    else:
+        await state.update_data(question=topic_label)
+        await _begin_reading(callback.message, state, callback.from_user.id)
+
+
+@router.message(ReadingState.waiting_question)
+async def got_question(message: Message, state: FSMContext):
+    question = message.text.strip()
+    if len(question) < 5:
+        await message.answer("Задай вопрос подробнее, дитя моё... 🕯")
+        return
+    await state.update_data(question=question)
+    await _begin_reading(message, state, message.from_user.id)
+
+
+async def _begin_reading(msg, state: FSMContext, user_id: int):
+    user = get_user(user_id)
+    data = await state.get_data()
+
+    # Списываем trial если не подписчик
+    if not is_subscribed(user_id):
+        use_trial(user_id)
+
+    # Тянем карты
+    cards = draw_cards(3)
+    await state.update_data(cards=cards, card_index=0, interpretations=[])
+    await state.set_state(ReadingState.showing_cards)
+
+    # Тасование
+    shuffle_msg = await msg.answer(get(SHUFFLING))
+    await asyncio.sleep(2)
+    await shuffle_msg.delete()
+
+    # Показываем первую карту
+    await _show_card(msg, state, user, cards, 0)
+
+
+async def _show_card(msg, state: FSMContext, user, cards: list, index: int):
+    card = cards[index]
+    position_label, position_name = POSITIONS[index]
+    data = await state.get_data()
+    topic_label = data.get("topic_label", "")
+    question = data.get("question", "")
+
+    # Заголовок позиции
+    await msg.answer(get(
+        [FIRST_CARD, SECOND_CARD, THIRD_CARD][index]
+    ) if index > 0 else get(FIRST_CARD))
+
+    await asyncio.sleep(0.5)
+
+    # Картинка карты (пока эмодзи — потом заменим на реальные картинки)
+    reversed_label = "🔄 Перевёрнутая" if card["is_reversed"] else "⬆️ Прямая"
+
+    # AI интерпретация
+    interpretation = await interpret_card(
+        name=user["name"],
+        card=card,
+        position=position_name,
+        topic=topic_label,
+        question=question
+    )
+
+    # Сохраняем интерпретацию
+    interpretations = data.get("interpretations", [])
+    interpretations.append(interpretation)
+    await state.update_data(interpretations=interpretations, card_index=index + 1)
+
+    text = (
+        f"{position_label}\n\n"
+        f"🃏 {card['name']}\n"
+        f"{reversed_label}\n\n"
+        f"{interpretation}"
+    )
+
+    # Кнопка следующего шага
+    if index < 2:
+        kb = next_card_kb(index + 1)
+    else:
+        kb = verdict_kb()
+
+    await msg.answer(text, reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("next_card_"))
+async def next_card(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    index = data.get("card_index", 0)
+    cards = data.get("cards", [])
+    user = get_user(callback.from_user.id)
+
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await _show_card(callback.message, state, user, cards, index)
+
+
+@router.callback_query(F.data == "get_verdict")
+async def show_verdict(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    user = get_user(callback.from_user.id)
+    cards = data.get("cards", [])
+    topic_label = data.get("topic_label", "")
+    question = data.get("question", "")
+    interpretations = data.get("interpretations", [])
+
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer(get(VERDICT_INTRO))
+    await asyncio.sleep(1)
+
+    verdict = await get_verdict(
+        name=user["name"],
+        topic=topic_label,
+        question=question,
+        cards=cards,
+        interpretations=interpretations
+    )
+
+    # Сохраняем расклад в базу
+    save_reading(
+        user_id=callback.from_user.id,
+        topic=topic_label,
+        question=question,
+        card1=cards[0]["name"],
+        card2=cards[1]["name"],
+        card3=cards[2]["name"],
+        verdict=verdict
+    )
+
+    bot_username = (await callback.bot.get_me()).username
+
+    await callback.message.answer(
+        f"🔮 Бабушка AIda говорит...\n\n{verdict}\n\n"
+        f"_{get(AFTER_READING)}_",
+        reply_markup=after_reading_kb(bot_username, callback.from_user.id),
+        parse_mode="Markdown"
+    )
+
+    await state.clear()

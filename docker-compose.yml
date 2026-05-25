@@ -1,0 +1,12 @@
+services:
+  bot:
+    build: .
+    container_name: babushka_aida
+    restart: always
+    environment:
+      BOT_TOKEN: ${BOT_TOKEN}
+      ADMIN_ID: ${ADMIN_ID}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      MODEL: ${MODEL:-anthropic/claude-haiku-4-5}
+    volumes:
+      - ./data_db:/app/data_db
