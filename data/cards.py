@@ -107,6 +107,20 @@ for card in MAJOR_ARCANA:
     card["image_slug"] = MAJOR_IMAGE_SLUGS[card["id"]]
 
 ALL_CARDS = MAJOR_ARCANA + MINOR_ARCANA
+ZODIAC_SIGNS = [
+    ((1, 20), "Водолей ♒"),
+    ((2, 19), "Рыбы ♓"),
+    ((3, 21), "Овен ♈"),
+    ((4, 20), "Телец ♉"),
+    ((5, 21), "Близнецы ♊"),
+    ((6, 21), "Рак ♋"),
+    ((7, 23), "Лев ♌"),
+    ((8, 23), "Дева ♍"),
+    ((9, 23), "Весы ♎"),
+    ((10, 23), "Скорпион ♏"),
+    ((11, 22), "Стрелец ♐"),
+    ((12, 22), "Козерог ♑"),
+]
 
 
 def get_card_image_url(card: dict) -> str:
@@ -150,10 +164,7 @@ def normalize_birthdate(birthdate_str):
 def get_soul_card(birthdate_str):
     """Карта судьбы по дате рождения"""
     try:
-        digits = [int(d) for d in birthdate_str if d.isdigit()]
-        total = sum(digits)
-        while total > 21:
-            total = sum(int(d) for d in str(total))
+        total = get_soul_card_calculation(birthdate_str)["card_id"]
         for card in MAJOR_ARCANA:
             if card["id"] == total:
                 return card
@@ -162,26 +173,28 @@ def get_soul_card(birthdate_str):
         return MAJOR_ARCANA[0]
 
 
+def get_soul_card_calculation(birthdate_str):
+    """Подробный расчёт карты судьбы по цифрам даты рождения."""
+    normalized = normalize_birthdate(birthdate_str)
+    digits = [int(d) for d in normalized if d.isdigit()]
+    steps = [sum(digits)]
+    while steps[-1] > 21:
+        steps.append(sum(int(d) for d in str(steps[-1])))
+    return {
+        "birthdate": normalized,
+        "digits": digits,
+        "first_sum": steps[0],
+        "steps": steps,
+        "card_id": steps[-1],
+    }
+
+
 def get_zodiac(birthdate_str):
     """Знак зодиака по дате рождения"""
     try:
         birthdate = parse_birthdate(birthdate_str)
         day, month = birthdate.day, birthdate.month
-        signs = [
-            ((1, 20), "Водолей ♒"),
-            ((2, 19), "Рыбы ♓"),
-            ((3, 21), "Овен ♈"),
-            ((4, 20), "Телец ♉"),
-            ((5, 21), "Близнецы ♊"),
-            ((6, 21), "Рак ♋"),
-            ((7, 23), "Лев ♌"),
-            ((8, 23), "Дева ♍"),
-            ((9, 23), "Весы ♎"),
-            ((10, 23), "Скорпион ♏"),
-            ((11, 22), "Стрелец ♐"),
-            ((12, 22), "Козерог ♑"),
-        ]
-        for (start_month, start_day), sign in reversed(signs):
+        for (start_month, start_day), sign in reversed(ZODIAC_SIGNS):
             if (month, day) >= (start_month, start_day):
                 return sign
         return "Козерог ♑"

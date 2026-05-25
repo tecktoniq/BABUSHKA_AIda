@@ -8,7 +8,8 @@ import os
 
 from database.db import get_user, create_user, update_user, is_subscribed, has_trial
 from data.phrases import get, WELCOME
-from data.cards import get_zodiac, get_soul_card, normalize_birthdate
+from data.cards import get_zodiac, get_soul_card, get_soul_card_calculation, normalize_birthdate
+from services.ai import get_soul_card_analysis
 
 router = Router()
 ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
@@ -23,6 +24,7 @@ class Onboarding(StatesGroup):
 def main_menu_kb(user_id: int | None = None):
     kb = InlineKeyboardBuilder()
     kb.button(text="🃏 Сделать расклад", callback_data="start_reading")
+    kb.button(text="🔢 Анализ карты судьбы", callback_data="soul_card_analysis")
     kb.button(text="⭐ Открыть подписку", callback_data="subscription")
     kb.button(text="📖 Что умеет бабушка?", callback_data="about")
     kb.button(text="⚙️ Мои данные", callback_data="my_data")
@@ -178,6 +180,7 @@ async def my_data(callback: CallbackQuery):
     kb = InlineKeyboardBuilder()
     kb.button(text="✏️ Изменить имя", callback_data="edit_name")
     kb.button(text="📅 Изменить дату рождения", callback_data="edit_birthdate")
+    kb.button(text="🔢 Анализ карты судьбы", callback_data="soul_card_analysis")
     kb.button(text="🎁 Моя реферальная ссылка", callback_data="referral")
     kb.button(text="◀️ Назад", callback_data="main_menu")
     kb.adjust(1)
@@ -212,4 +215,45 @@ async def referral(callback: CallbackQuery):
         f"Бонусы накапливаются без ограничений!",
         reply_markup=kb.as_markup(),
         parse_mode="Markdown"
+    )
+
+
+@router.callback_query(F.data == "soul_card_analysis")
+async def soul_card_analysis(callback: CallbackQuery):
+    user = get_user(callback.from_user.id)
+    if not user or not user["name"] or not user["birthdate"]:
+        await callback.answer("Сначала пройди регистрацию!")
+        return
+
+    calculation = get_soul_card_calculation(user["birthdate"])
+    soul_card = get_soul_card(user["birthdate"])
+    digits_text = " + ".join(str(digit) for digit in calculation["digits"])
+    steps_text = " → ".join(str(step) for step in calculation["steps"])
+
+    await callback.message.edit_text(
+        "🔢 Считаю карту судьбы...\n\n"
+        f"Дата: {calculation['birthdate']}\n"
+        f"Цифры: {digits_text}\n"
+        f"Расчёт: {steps_text}\n"
+        f"Карта: {soul_card['name']} 🔮\n\n"
+        "Сейчас Бабушка AIda даст развёрнутый AI-анализ."
+    )
+
+    analysis = await get_soul_card_analysis(
+        name=user["name"],
+        birthdate=calculation["birthdate"],
+        calculation=calculation,
+        soul_card=soul_card,
+    )
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="◀️ Главное меню", callback_data="main_menu")
+
+    await callback.message.answer(
+        f"🔢 Карта судьбы: {soul_card['name']}\n\n"
+        f"Логика расчёта:\n"
+        f"{digits_text} = {calculation['first_sum']}\n"
+        f"Приведение к старшему аркану: {steps_text}\n\n"
+        f"🔮 AI-анализ:\n\n{analysis}",
+        reply_markup=kb.as_markup()
     )

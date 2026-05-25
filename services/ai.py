@@ -1,4 +1,5 @@
 import httpx
+import logging
 import os
 from dotenv import load_dotenv
 
@@ -6,6 +7,8 @@ load_dotenv()
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 MODEL = os.getenv("MODEL", "anthropic/claude-haiku-4-5")
+FALLBACK_MODEL = os.getenv("FALLBACK_MODEL", "openrouter/free")
+logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """Ты — Бабушка AIda, мудрая и тёплая гадалка с многолетним опытом.
 Твой стиль: тёплый, загадочный, заботливый. Говоришь с лёгкой мистикой.
@@ -16,25 +19,73 @@ SYSTEM_PROMPT = """Ты — Бабушка AIda, мудрая и тёплая г
 
 async def ask_aida(prompt: str) -> str:
     """Отправить запрос к Claude Haiku через OpenRouter"""
+    if not OPENROUTER_API_KEY:
+        return local_fallback_answer(prompt)
+
+    models = []
+    for model in (MODEL, FALLBACK_MODEL):
+        if model and model not in models:
+            models.append(model)
+
     async with httpx.AsyncClient(timeout=30) as client:
-        response = await client.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": MODEL,
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt},
-                ],
-                "max_tokens": 400,
-                "temperature": 0.9,
-            }
+        for model in models:
+            try:
+                response = await client.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                        "Content-Type": "application/json",
+                        "HTTP-Referer": "https://github.com/tecktoniq/BABUSHKA_AIda",
+                        "X-Title": "BABUSHKA AIda",
+                    },
+                    json={
+                        "model": model,
+                        "messages": [
+                            {"role": "system", "content": SYSTEM_PROMPT},
+                            {"role": "user", "content": prompt},
+                        ],
+                        "max_tokens": 700,
+                        "temperature": 0.85,
+                    }
+                )
+                data = response.json()
+                if response.status_code >= 400:
+                    logger.warning("OpenRouter model %s failed: %s %s", model, response.status_code, data)
+                    continue
+                choice = data.get("choices", [{}])[0]
+                content = choice.get("message", {}).get("content")
+                if content:
+                    return content.strip()
+                logger.warning("OpenRouter model %s returned no content: %s", model, data)
+            except Exception as exc:
+                logger.warning("OpenRouter request failed for %s: %s", model, exc)
+
+    return local_fallback_answer(prompt)
+
+
+def local_fallback_answer(prompt: str) -> str:
+    """Мягкий резервный ответ, чтобы сценарий не ломался при ошибке API."""
+    if "Карта судьбы" in prompt:
+        return (
+            "Карты шепчут, что эта карта судьбы описывает главный внутренний урок: "
+            "как человек принимает себя, где берёт силу и через что растёт. "
+            "Смотри на неё не как на приговор, а как на ключ: она показывает привычный путь души, "
+            "её сильные стороны и место, где важно быть честнее с собой."
         )
-        data = response.json()
-        return data["choices"][0]["message"]["content"].strip()
+    if "итоговый вердикт" in prompt.lower() or "Карты расклада" in prompt:
+        return (
+            "Если собрать три карты вместе, получается не случайный набор, а цепочка: "
+            "прошлое показывает корень ситуации, настоящее — то, что требует внимания сейчас, "
+            "а будущее — направление, куда всё может повернуть. "
+            "Главный совет простой: не спешить, увидеть повторяющийся узор и выбрать действие, "
+            "которое возвращает тебе спокойствие и власть над своей дорогой."
+        )
+    return (
+        "Эта карта говорит о движении энергии вокруг твоего вопроса. "
+        "В прямом положении она больше поддерживает и открывает путь, "
+        "в перевёрнутом — показывает задержку, страх или место, где сила пока заблокирована. "
+        "Прислушайся к первому ощущению: карта не приказывает, она подсвечивает то, что уже созрело внутри."
+    )
 
 
 async def interpret_card(name: str, card: dict, position: str, topic: str, question: str) -> str:
@@ -90,4 +141,27 @@ async def get_soul_card_reading(name: str, soul_card: dict) -> str:
 
 Расскажи {name} о карте судьбы от лица Бабушки AIda.
 Это очень личное — карта на всю жизнь. Говори глубоко и тепло."""
+    return await ask_aida(prompt)
+
+
+async def get_soul_card_analysis(name: str, birthdate: str, calculation: dict, soul_card: dict) -> str:
+    """Развёрнутый анализ карты судьбы с логикой расчёта."""
+    digits = " + ".join(str(d) for d in calculation["digits"])
+    steps = " → ".join(str(step) for step in calculation["steps"])
+    prompt = f"""Имя: {name}
+Дата рождения: {birthdate}
+Расчёт карты судьбы:
+Цифры даты: {digits}
+Сумма и приведение к старшему аркану: {steps}
+Итоговый номер карты: {calculation['card_id']}
+Карта судьбы: {soul_card['name']}
+Значение карты: {soul_card['upright']}
+
+Объясни логику расчёта простыми словами и дай интересный развернутый результат по карте судьбы.
+Структура ответа:
+1. Как посчитали карту.
+2. Что эта карта говорит о характере и внутреннем пути.
+3. Сильные стороны.
+4. Теневая сторона и совет.
+Пиши от лица Бабушки AIda, тепло и мистично, но без обращения к полу пользователя."""
     return await ask_aida(prompt)

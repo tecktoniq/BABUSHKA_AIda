@@ -54,15 +54,15 @@ def topic_kb():
 def next_card_kb(card_index: int):
     kb = InlineKeyboardBuilder()
     if card_index == 1:
-        kb.button(text="🃏 Вытащить вторую карту", callback_data=f"next_card_{card_index}")
+        kb.button(text="🃏 Открыть вторую карту с анализом", callback_data=f"next_card_{card_index}")
     elif card_index == 2:
-        kb.button(text="🃏 Вытащить третью карту", callback_data=f"next_card_{card_index}")
+        kb.button(text="🃏 Открыть третью карту с анализом", callback_data=f"next_card_{card_index}")
     return kb.as_markup()
 
 
 def verdict_kb():
     kb = InlineKeyboardBuilder()
-    kb.button(text="🔮 Получить вердикт бабушки", callback_data="get_verdict")
+    kb.button(text="🔮 Получить итоговую AI-интерпретацию", callback_data="get_verdict")
     return kb.as_markup()
 
 
@@ -185,7 +185,8 @@ async def _show_card(msg, state: FSMContext, user, cards: list, index: int):
         logger.warning("Failed to send tarot card image %s: %s", card.get("image_url"), exc)
         await msg.answer(f"{card_title}\n\nКарта: {card['image_url']}")
 
-    # AI интерпретация
+    thinking_msg = await msg.answer("🔮 Бабушка AIda смотрит на карту и зовёт AI-видение...")
+
     interpretation = await interpret_card(
         name=user["name"],
         card=card,
@@ -193,6 +194,7 @@ async def _show_card(msg, state: FSMContext, user, cards: list, index: int):
         topic=topic_label,
         question=question
     )
+    await thinking_msg.delete()
 
     # Сохраняем интерпретацию
     interpretations = data.get("interpretations", [])
@@ -205,7 +207,10 @@ async def _show_card(msg, state: FSMContext, user, cards: list, index: int):
     else:
         kb = verdict_kb()
 
-    await msg.answer(interpretation, reply_markup=kb)
+    await msg.answer(
+        f"🔮 AI-анализ карты:\n\n{interpretation}",
+        reply_markup=kb
+    )
 
 
 @router.callback_query(F.data.startswith("next_card_"))
