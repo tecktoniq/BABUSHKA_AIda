@@ -39,11 +39,13 @@ async def cmd_start(message: Message, state: FSMContext):
     user_id = message.from_user.id
     username = message.from_user.username or ""
 
+    user_before_start = get_user(user_id)
+
     # Проверяем реферала
     args = message.text.split()
     if len(args) > 1 and args[1].startswith("ref_"):
         referrer_id = int(args[1].replace("ref_", ""))
-        if referrer_id != user_id:
+        if referrer_id != user_id and not user_before_start:
             await state.update_data(referrer_id=referrer_id)
 
     create_user(user_id, username)
@@ -210,9 +212,9 @@ async def referral(callback: CallbackQuery):
     await callback.message.edit_text(
         f"🎁 Твоя реферальная ссылка:\n\n"
         f"`{ref_link}`\n\n"
-        f"Поделись с подругой — она получит первый месяц за 199 Stars ⭐\n"
-        f"А ты получишь +7 дней к подписке 🔮\n\n"
-        f"Бонусы накапливаются без ограничений!",
+        f"Поделись ссылкой — приглашённый человек сможет открыть Бабушку AIda по твоему приглашению.\n"
+        f"Когда он впервые оплатит Stars, ты получишь +7 дней к подписке 🔮\n\n"
+        f"Бонус начисляется только после первой оплаты, не просто за переход по ссылке.",
         reply_markup=kb.as_markup(),
         parse_mode="Markdown"
     )
@@ -236,7 +238,7 @@ async def soul_card_analysis(callback: CallbackQuery):
         f"Цифры: {digits_text}\n"
         f"Расчёт: {steps_text}\n"
         f"Карта: {soul_card['name']} 🔮\n\n"
-        "Сейчас Бабушка AIda даст развёрнутый AI-анализ."
+        "Сейчас Бабушка AIda раскроет её смысл."
     )
 
     analysis = await get_soul_card_analysis(
@@ -254,6 +256,6 @@ async def soul_card_analysis(callback: CallbackQuery):
         f"Логика расчёта:\n"
         f"{digits_text} = {calculation['first_sum']}\n"
         f"Приведение к старшему аркану: {steps_text}\n\n"
-        f"🔮 AI-анализ:\n\n{analysis}",
+        f"🔮 Бабушка AIda говорит:\n\n{analysis}",
         reply_markup=kb.as_markup()
     )

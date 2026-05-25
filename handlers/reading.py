@@ -6,7 +6,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 import asyncio
 import logging
 
-from database.db import get_user, is_subscribed, has_trial, use_trial, save_reading
+from database.db import get_user, is_subscribed, has_trial, use_trial, save_reading, get_last_readings
 from data.cards import draw_cards
 from data.phrases import get, SHUFFLING, FIRST_CARD, SECOND_CARD, THIRD_CARD, VERDICT_INTRO, AFTER_READING
 from services.ai import interpret_card, get_verdict
@@ -54,21 +54,21 @@ def topic_kb():
 def next_card_kb(card_index: int):
     kb = InlineKeyboardBuilder()
     if card_index == 1:
-        kb.button(text="🃏 Открыть вторую карту с анализом", callback_data=f"next_card_{card_index}")
+        kb.button(text="🃏 Взять вторую карту", callback_data=f"next_card_{card_index}")
     elif card_index == 2:
-        kb.button(text="🃏 Открыть третью карту с анализом", callback_data=f"next_card_{card_index}")
+        kb.button(text="🃏 Взять третью карту", callback_data=f"next_card_{card_index}")
     return kb.as_markup()
 
 
 def verdict_kb():
     kb = InlineKeyboardBuilder()
-    kb.button(text="🔮 Получить итоговую AI-интерпретацию", callback_data="get_verdict")
+    kb.button(text="🔮 Послушать итог Бабушки", callback_data="get_verdict")
     return kb.as_markup()
 
 
-def after_reading_kb(bot_username: str, user_id: int):
+def after_reading_kb():
     kb = InlineKeyboardBuilder()
-    kb.button(text="🔄 Поделиться раскладом", switch_inline_query=f"Я гадала у Бабушки AIda @{bot_username}")
+    kb.button(text="🔄 Поделиться раскладом", callback_data="share_reading")
     kb.button(text="🃏 Новый расклад", callback_data="start_reading")
     kb.button(text="◀️ Главное меню", callback_data="main_menu")
     kb.adjust(1)
@@ -185,7 +185,7 @@ async def _show_card(msg, state: FSMContext, user, cards: list, index: int):
         logger.warning("Failed to send tarot card image %s: %s", card.get("image_url"), exc)
         await msg.answer(f"{card_title}\n\nКарта: {card['image_url']}")
 
-    thinking_msg = await msg.answer("🔮 Бабушка AIda смотрит на карту и зовёт AI-видение...")
+    thinking_msg = await msg.answer("🔮 Бабушка AIda всматривается в карту...")
 
     interpretation = await interpret_card(
         name=user["name"],
@@ -208,7 +208,7 @@ async def _show_card(msg, state: FSMContext, user, cards: list, index: int):
         kb = verdict_kb()
 
     await msg.answer(
-        f"🔮 AI-анализ карты:\n\n{interpretation}",
+        f"🔮 Бабушка AIda говорит:\n\n{interpretation}",
         reply_markup=kb
     )
 
@@ -256,13 +256,44 @@ async def show_verdict(callback: CallbackQuery, state: FSMContext):
         verdict=verdict
     )
 
-    bot_username = (await callback.bot.get_me()).username
-
     await callback.message.answer(
         f"🔮 Бабушка AIda говорит...\n\n{verdict}\n\n"
         f"_{get(AFTER_READING)}_",
-        reply_markup=after_reading_kb(bot_username, callback.from_user.id),
+        reply_markup=after_reading_kb(),
         parse_mode="Markdown"
     )
 
     await state.clear()
+
+
+@router.callback_query(F.data == "share_reading")
+async def share_reading(callback: CallbackQuery):
+    readings = get_last_readings(callback.from_user.id, limit=1)
+    if not readings:
+        await callback.answer("Сначала сделай расклад")
+        return
+
+    reading = readings[0]
+    bot_username = (await callback.bot.get_me()).username
+    ref_link = f"https://t.me/{bot_username}?start=ref_{callback.from_user.id}"
+    verdict = reading["verdict"] or ""
+    short_verdict = verdict if len(verdict) <= 850 else verdict[:847].rstrip() + "..."
+
+    share_text = (
+        "🔮 Смотри, как мне погадала Бабушка AIda\n\n"
+        f"Вопрос: {reading['question']}\n\n"
+        "Карты расклада:\n"
+        f"1. {reading['card1']}\n"
+        f"2. {reading['card2']}\n"
+        f"3. {reading['card3']}\n\n"
+        "Что сказала Бабушка:\n"
+        f"{short_verdict}\n\n"
+        "Хочешь тоже спросить карты?\n"
+        f"{ref_link}"
+    )
+
+    await callback.message.answer(
+        "Вот красивый текст для пересылки:\n\n"
+        f"{share_text}"
+    )
+    await callback.answer()

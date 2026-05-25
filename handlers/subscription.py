@@ -2,12 +2,12 @@ from aiogram import Router, F
 from aiogram.types import CallbackQuery, LabeledPrice, PreCheckoutQuery, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from database.db import is_subscribed, add_subscription, get_user
+from database.db import is_subscribed, add_subscription, get_user, reward_referrer_after_payment
 
 router = Router()
 
 PRICES = {
-    "single": {"stars": 99, "days": 0, "label": "Один расклад с AI"},
+    "single": {"stars": 99, "days": 0, "label": "Один расклад с толкованием"},
     "month": {"stars": 399, "days": 30, "label": "Подписка на 1 месяц"},
     "3months": {"stars": 999, "days": 90, "label": "Подписка на 3 месяца (-20%)"},
     "ref_month": {"stars": 199, "days": 30, "label": "Подписка на 1 месяц (реферальная)"},
@@ -36,7 +36,7 @@ async def show_subscription(callback: CallbackQuery):
     await callback.message.edit_text(
         f"{sub_status}"
         f"✨ Открой всю силу Бабушки AIda, {name}!\n\n"
-        f"🃏 Безлимитные расклады с AI толкованием\n"
+        f"🃏 Безлимитные расклады с живым толкованием\n"
         f"🌅 Персональный гороскоп каждое утро\n"
         f"🔢 Твоя карта судьбы\n"
         f"📚 История всех раскладов\n\n"
@@ -56,7 +56,7 @@ async def buy(callback: CallbackQuery):
     await callback.bot.send_invoice(
         chat_id=callback.from_user.id,
         title=f"Бабушка AIda — {price_data['label']}",
-        description="Доступ к персональным раскладам Таро с AI толкованием 🔮",
+        description="Доступ к персональным раскладам Таро с тёплым толкованием 🔮",
         payload=f"sub_{plan}_{callback.from_user.id}",
         currency="XTR",  # Telegram Stars
         prices=[LabeledPrice(label=price_data["label"], amount=price_data["stars"])],
@@ -101,3 +101,14 @@ async def successful_payment(message: Message):
             f"Бабушка AIda теперь всегда с тобой 🔮\n"
             f"Каждое утро тебя ждёт персональный гороскоп 🌅"
         )
+
+    reward = reward_referrer_after_payment(user_id, plan)
+    if reward:
+        try:
+            await message.bot.send_message(
+                reward["referrer_id"],
+                "🎁 По твоей ссылке пришёл новый покупатель.\n\n"
+                f"Бабушка AIda добавила тебе {reward['bonus_days']} дней подписки 🔮"
+            )
+        except Exception:
+            pass

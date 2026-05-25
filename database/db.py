@@ -52,12 +52,23 @@ def init_db():
         referrer_id INTEGER,
         referred_id INTEGER,
         bonus_days INTEGER DEFAULT 7,
+        rewarded_at TEXT,
+        reward_payment_type TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )''')
+
+    ensure_column(c, "referrals", "rewarded_at", "TEXT")
+    ensure_column(c, "referrals", "reward_payment_type", "TEXT")
 
     conn.commit()
     conn.close()
     print("✅ База данных инициализирована")
+
+
+def ensure_column(cursor, table, column, definition):
+    columns = [row[1] for row in cursor.execute(f"PRAGMA table_info({table})").fetchall()]
+    if column not in columns:
+        cursor.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 # --- USERS ---
 
@@ -120,12 +131,14 @@ def add_subscription(user_id, days, sub_type="paid"):
     now = datetime.now()
     from datetime import timedelta
     expires = (now + timedelta(days=days)).isoformat()
-    conn.execute(
+    cursor = conn.execute(
         "INSERT INTO subscriptions (user_id, type, started_at, expires_at) VALUES (?, ?, ?, ?)",
         (user_id, sub_type, now.isoformat(), expires)
     )
+    subscription_id = cursor.lastrowid
     conn.commit()
     conn.close()
+    return subscription_id
 
 def add_bonus_days(user_id, days):
     conn = get_conn()
@@ -188,6 +201,12 @@ def get_last_readings(user_id, limit=10):
 # --- REFERRALS ---
 
 def add_referral(referrer_id, referred_id):
+    """Записать реферала без начисления бонуса.
+
+    Бонус начисляется только после первой успешной оплаты приглашённого.
+    """
+    if referrer_id == referred_id:
+        return False
     conn = get_conn()
     exists = conn.execute(
         "SELECT * FROM referrals WHERE referred_id=?", (referred_id,)
@@ -198,8 +217,36 @@ def add_referral(referrer_id, referred_id):
             (referrer_id, referred_id)
         )
         conn.commit()
-        add_bonus_days(referrer_id, 7)
+        conn.close()
+        return True
     conn.close()
+    return False
+
+
+def reward_referrer_after_payment(referred_id, payment_type):
+    """Начислить 7 дней пригласившему после первой оплаты Stars приглашённым."""
+    conn = get_conn()
+    referral = conn.execute(
+        "SELECT * FROM referrals WHERE referred_id=? AND rewarded_at IS NULL",
+        (referred_id,)
+    ).fetchone()
+    if not referral:
+        conn.close()
+        return None
+
+    rewarded_at = datetime.now().isoformat()
+    conn.execute(
+        "UPDATE referrals SET rewarded_at=?, reward_payment_type=? WHERE id=?",
+        (rewarded_at, payment_type, referral["id"])
+    )
+    conn.commit()
+    conn.close()
+
+    add_bonus_days(referral["referrer_id"], referral["bonus_days"])
+    return {
+        "referrer_id": referral["referrer_id"],
+        "bonus_days": referral["bonus_days"],
+    }
 
 # --- STATS ---
 
