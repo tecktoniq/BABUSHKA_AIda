@@ -1,6 +1,7 @@
 import httpx
 import logging
 import os
+import re
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -8,7 +9,15 @@ load_dotenv()
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 MODEL = os.getenv("MODEL", "anthropic/claude-haiku-4-5")
 FALLBACK_MODEL = os.getenv("FALLBACK_MODEL", "openrouter/free")
+OPENROUTER_TIMEOUT = float(os.getenv("OPENROUTER_TIMEOUT", "12"))
 logger = logging.getLogger(__name__)
+
+LIMITS = {
+    "card": 650,
+    "verdict": 1100,
+    "horoscope": 900,
+    "soul": 1300,
+}
 
 SYSTEM_PROMPT = """Ты — Бабушка AIda, мудрая и тёплая гадалка с многолетним опытом.
 Твой стиль: тёплый, загадочный, заботливый. Говоришь с лёгкой мистикой.
@@ -29,7 +38,7 @@ async def ask_aida(prompt: str) -> str:
         if model and model not in models:
             models.append(model)
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=OPENROUTER_TIMEOUT) as client:
         for model in models:
             try:
                 response = await client.post(
@@ -46,8 +55,8 @@ async def ask_aida(prompt: str) -> str:
                             {"role": "system", "content": SYSTEM_PROMPT},
                             {"role": "user", "content": prompt},
                         ],
-                        "max_tokens": 700,
-                        "temperature": 0.85,
+                        "max_tokens": 360,
+                        "temperature": 0.75,
                     }
                 )
                 data = response.json()
@@ -57,12 +66,47 @@ async def ask_aida(prompt: str) -> str:
                 choice = data.get("choices", [{}])[0]
                 content = choice.get("message", {}).get("content")
                 if content:
-                    return content.strip()
+                    return clean_answer(content)
                 logger.warning("OpenRouter model %s returned no content: %s", model, data)
             except Exception as exc:
                 logger.warning("OpenRouter request failed for %s: %s", model, exc)
 
     return local_fallback_answer(prompt)
+
+
+def clean_answer(text: str, limit: int | None = None) -> str:
+    text = text.strip()
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = fix_sticky_prepositions(text)
+    if limit and len(text) > limit:
+        text = text[:limit].rstrip()
+        last_sentence = max(text.rfind("."), text.rfind("!"), text.rfind("?"))
+        if last_sentence > limit * 0.65:
+            text = text[:last_sentence + 1]
+        else:
+            text += "..."
+    return text
+
+
+def fix_sticky_prepositions(text: str) -> str:
+    next_words = (
+        "тебе", "тебя", "тобой", "себе", "себя", "собой", "мне", "меня",
+        "моей", "мою", "моем", "моём", "моих", "твоей", "твою", "твоем", "твоём", "твоих",
+        "этой", "эту", "этом", "этих", "этим", "этого",
+        "день", "вечер", "утро", "ночь", "сердце", "душе", "пути", "ситуации",
+        "любви", "работе", "деньгах", "отношениях", "будущем", "прошлом", "настоящем",
+    )
+    prepositions = ("в", "во", "на", "к", "ко", "с", "со", "у", "о", "об", "от", "до", "по", "за", "из", "без", "для", "над", "под", "при", "про", "через")
+    word_pattern = "|".join(sorted((re.escape(word) for word in next_words), key=len, reverse=True))
+    for prep in sorted(prepositions, key=len, reverse=True):
+        text = re.sub(
+            rf"(?<![А-Яа-яЁё])({prep})({word_pattern})(?![А-Яа-яЁё])",
+            r"\1 \2",
+            text,
+            flags=re.IGNORECASE,
+        )
+    return text
 
 
 def local_fallback_answer(prompt: str) -> str:
@@ -100,9 +144,10 @@ async def interpret_card(name: str, card: dict, position: str, topic: str, quest
 Позиция в раскладе: {position}
 
 Дай живое толкование этой карты от лица Бабушки AIda.
+Длина ответа: 4 коротких предложения, максимум 650 символов.
 Пиши только по-русски, без английских слов и технических терминов.
 Учитывай тему вопроса и позицию карты. Обращайся к {name} по имени."""
-    return await ask_aida(prompt)
+    return clean_answer(await ask_aida(prompt), LIMITS["card"])
 
 
 async def get_verdict(name: str, topic: str, question: str, cards: list, interpretations: list) -> str:
@@ -118,10 +163,11 @@ async def get_verdict(name: str, topic: str, question: str, cards: list, interpr
 {cards_text}
 
 Дай итоговый вердикт по всему раскладу от лица Бабушки AIda.
+Длина ответа: 6-8 коротких предложений, максимум 1100 символов.
 Пиши только по-русски, без английских слов и технических терминов.
 Свяжи все три карты вместе, дай мудрый совет для {name}.
 Заверши тёплой фразой с заботой."""
-    return await ask_aida(prompt)
+    return clean_answer(await ask_aida(prompt), LIMITS["verdict"])
 
 
 async def get_daily_horoscope(name: str, zodiac: str, card_name: str, card_meaning: str) -> str:
@@ -132,10 +178,11 @@ async def get_daily_horoscope(name: str, zodiac: str, card_name: str, card_meani
 Значение карты: {card_meaning}
 
 Напиши персональный утренний гороскоп от Бабушки AIda для {name}.
+Длина ответа: максимум 900 символов.
 Пиши только по-русски, без английских слов и технических терминов.
 Учитывай знак зодиака и карту дня. Тепло, мистично, с надеждой. 
 Обращайся к {name} по имени."""
-    return await ask_aida(prompt)
+    return clean_answer(await ask_aida(prompt), LIMITS["horoscope"])
 
 
 async def get_soul_card_reading(name: str, soul_card: dict) -> str:
@@ -145,9 +192,10 @@ async def get_soul_card_reading(name: str, soul_card: dict) -> str:
 Значение: {soul_card['upright']}
 
 Расскажи {name} о карте судьбы от лица Бабушки AIda.
+Длина ответа: максимум 1300 символов.
 Пиши только по-русски, без английских слов и технических терминов.
 Это очень личное — карта на всю жизнь. Говори глубоко и тепло."""
-    return await ask_aida(prompt)
+    return clean_answer(await ask_aida(prompt), LIMITS["soul"])
 
 
 async def get_soul_card_analysis(name: str, birthdate: str, calculation: dict, soul_card: dict) -> str:
@@ -163,12 +211,13 @@ async def get_soul_card_analysis(name: str, birthdate: str, calculation: dict, s
 Карта судьбы: {soul_card['name']}
 Значение карты: {soul_card['upright']}
 
-Объясни логику расчёта простыми словами и дай интересный развернутый результат по карте судьбы.
+Объясни логику расчёта простыми словами и дай интересный результат по карте судьбы.
+Длина ответа: максимум 1300 символов. Никаких длинных полотен текста.
 Пиши только по-русски, без английских слов и технических терминов.
 Структура ответа:
-1. Как посчитали карту.
-2. Что эта карта говорит о характере и внутреннем пути.
-3. Сильные стороны.
-4. Теневая сторона и совет.
+1. Как посчитали карту — 1 короткая фраза.
+2. Смысл карты — 3 короткие фразы.
+3. Сильная сторона — 1 короткая фраза.
+4. Совет — 1 короткая фраза.
 Пиши от лица Бабушки AIda, тепло и мистично, но без обращения к полу пользователя."""
-    return await ask_aida(prompt)
+    return clean_answer(await ask_aida(prompt), LIMITS["soul"])
