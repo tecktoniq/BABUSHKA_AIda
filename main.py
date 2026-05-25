@@ -49,6 +49,19 @@ async def setup_bot_commands(bot: Bot):
         )
 
 
+async def notify_admin_startup(bot: Bot):
+    if not ADMIN_ID:
+        return
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            "🔮 Бабушка AIda запустилась.\n"
+            "Я на месте, дитя моё. Можно проверять расклады.",
+        )
+    except Exception as exc:
+        logger.warning("Could not send startup notification to admin: %s", exc)
+
+
 async def main():
     init_db()
 
@@ -65,6 +78,7 @@ async def main():
 
     await setup_bot_commands(bot)
     await bot.delete_webhook(drop_pending_updates=True)
+    await notify_admin_startup(bot)
     await dp.start_polling(bot)
 
 
