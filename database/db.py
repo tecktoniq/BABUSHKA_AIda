@@ -57,6 +57,19 @@ def init_db():
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )''')
 
+    c.execute('''CREATE TABLE IF NOT EXISTS daily_horoscopes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        period_date TEXT,
+        zodiac TEXT,
+        card_name TEXT,
+        card_position TEXT,
+        card_image_url TEXT,
+        text TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, period_date)
+    )''')
+
     ensure_column(c, "referrals", "rewarded_at", "TEXT")
     ensure_column(c, "referrals", "reward_payment_type", "TEXT")
     ensure_column(c, "users", "daily_horoscope_enabled", "INTEGER DEFAULT 0")
@@ -147,6 +160,36 @@ def mark_daily_horoscope_sent(user_id, today):
     conn.execute(
         "UPDATE users SET last_horoscope_sent=? WHERE user_id=?",
         (today, user_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_saved_daily_horoscope(user_id, period_date):
+    conn = get_conn()
+    horoscope = conn.execute(
+        "SELECT * FROM daily_horoscopes WHERE user_id=? AND period_date=?",
+        (user_id, period_date)
+    ).fetchone()
+    conn.close()
+    return horoscope
+
+
+def save_daily_horoscope(user_id, period_date, zodiac, card, text):
+    conn = get_conn()
+    conn.execute(
+        """INSERT OR REPLACE INTO daily_horoscopes
+           (user_id, period_date, zodiac, card_name, card_position, card_image_url, text)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (
+            user_id,
+            period_date,
+            zodiac,
+            card["name"],
+            card["position_label"],
+            card["image_url"],
+            text,
+        )
     )
     conn.commit()
     conn.close()

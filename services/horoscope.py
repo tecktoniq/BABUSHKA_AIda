@@ -7,13 +7,16 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from data.cards import draw_cards, get_zodiac
 from database.db import (
+    get_saved_daily_horoscope,
     get_daily_horoscope_users,
     mark_daily_horoscope_sent,
+    save_daily_horoscope,
 )
 from services.ai import get_daily_horoscope
 
 logger = logging.getLogger(__name__)
 MOSCOW_TZ = timezone(timedelta(hours=3))
+HOROSCOPE_HOUR_MSK = 8
 
 
 def horoscope_kb(auto: bool = False):
@@ -27,7 +30,19 @@ def horoscope_kb(auto: bool = False):
     return kb.as_markup()
 
 
-async def send_daily_horoscope(bot: Bot, user, auto: bool = False):
+def get_horoscope_period(now: datetime | None = None) -> str:
+    now = now or datetime.now(MOSCOW_TZ)
+    if now.hour < HOROSCOPE_HOUR_MSK:
+        now = now - timedelta(days=1)
+    return now.date().isoformat()
+
+
+async def get_or_create_daily_horoscope(user):
+    period_date = get_horoscope_period()
+    saved = get_saved_daily_horoscope(user["user_id"], period_date)
+    if saved:
+        return saved, False
+
     zodiac = get_zodiac(user["birthdate"])
     card = draw_cards(1)[0]
     analysis = await get_daily_horoscope(
@@ -36,23 +51,30 @@ async def send_daily_horoscope(bot: Bot, user, auto: bool = False):
         card_name=card["name"],
         card_meaning=card["meaning"],
     )
+    save_daily_horoscope(user["user_id"], period_date, zodiac, card, analysis)
+    return get_saved_daily_horoscope(user["user_id"], period_date), True
 
-    reversed_label = "🔄 перевернутая" if card["is_reversed"] else "⬆️ прямая"
+
+async def send_daily_horoscope(bot: Bot, user, auto: bool = False):
+    horoscope, created = await get_or_create_daily_horoscope(user)
+
+    reversed_label = f"🔄 {horoscope['card_position']}" if "перев" in horoscope["card_position"].lower() else f"⬆️ {horoscope['card_position']}"
+    reused_note = "" if created else "\n\nЭто твой уже открытый гороскоп дня. Новый появится после 08:00 МСК."
     caption = (
         "🌅 Гороскоп дня от Бабушки AIda\n\n"
-        f"Знак: {zodiac}\n"
-        f"🃏 Карта дня: {card['name']}\n"
+        f"Знак: {horoscope['zodiac']}\n"
+        f"🃏 Карта дня: {horoscope['card_name']}\n"
         f"{reversed_label}"
     )
     try:
-        await bot.send_photo(user["user_id"], photo=card["image_url"], caption=caption)
+        await bot.send_photo(user["user_id"], photo=horoscope["card_image_url"], caption=caption)
     except Exception as exc:
         logger.warning("Failed to send horoscope card to %s: %s", user["user_id"], exc)
-        await bot.send_message(user["user_id"], f"{caption}\n\nКарта: {card['image_url']}")
+        await bot.send_message(user["user_id"], f"{caption}\n\nКарта: {horoscope['card_image_url']}")
 
     await bot.send_message(
         user["user_id"],
-        f"🔮 Бабушка AIda говорит:\n\n{analysis}",
+        f"🔮 Бабушка AIda говорит:\n\n{horoscope['text']}{reused_note}",
         reply_markup=horoscope_kb(auto=auto),
     )
 
@@ -61,8 +83,8 @@ async def daily_horoscope_loop(bot: Bot):
     while True:
         try:
             now = datetime.now(MOSCOW_TZ)
-            if now.hour == 10:
-                today = now.date().isoformat()
+            if now.hour == HOROSCOPE_HOUR_MSK:
+                today = get_horoscope_period(now)
                 users = get_daily_horoscope_users(today)
                 for user in users:
                     try:
