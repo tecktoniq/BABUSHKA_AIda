@@ -16,6 +16,7 @@ LIMITS = {
     "card": 650,
     "verdict": 1100,
     "horoscope": 900,
+    "quick": 800,
     "soul": 1300,
 }
 
@@ -183,6 +184,25 @@ async def get_daily_horoscope(name: str, zodiac: str, card_name: str, card_meani
 Учитывай знак зодиака и карту дня. Тепло, мистично, с надеждой. 
 Обращайся к {name} по имени."""
     return clean_answer(await ask_aida(prompt), LIMITS["horoscope"])
+
+
+async def get_quick_card_answer(name: str, question: str, card: dict) -> str:
+    """Fast paid one-card answer for a user's concrete situation."""
+    prompt = f"""Имя пользователя: {name}
+Вопрос или ситуация: {question}
+Карта: {card['name']} ({card['position_label']})
+Значение карты: {card['meaning']}
+
+Пользователь выбрал быстрый ответ одной картой.
+Дай живую интерпретацию от лица Бабушки AIda именно под вопрос пользователя.
+Не делай расклад прошлое-настоящее-будущее.
+Не превращай ответ в формат да/нет и не обещай точный исход.
+Если вопрос звучит как "любит ли", "вернется ли", "стоит ли", отвечай мягко через смысл карты, без категоричного приговора.
+Структура ответа: что карта показывает; что важно заметить; совет.
+Длина ответа: максимум 800 символов.
+Пиши только по-русски, без английских слов и технических терминов.
+Обращайся к {name} по имени."""
+    return clean_answer(await ask_aida(prompt), LIMITS["quick"])
 
 
 async def get_soul_card_reading(name: str, soul_card: dict) -> str:

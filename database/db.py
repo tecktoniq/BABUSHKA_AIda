@@ -59,6 +59,8 @@ def init_db():
 
     ensure_column(c, "referrals", "rewarded_at", "TEXT")
     ensure_column(c, "referrals", "reward_payment_type", "TEXT")
+    ensure_column(c, "users", "daily_horoscope_enabled", "INTEGER DEFAULT 0")
+    ensure_column(c, "users", "last_horoscope_sent", "TEXT")
 
     conn.commit()
     conn.close()
@@ -111,6 +113,43 @@ def get_paying_users():
     """, (now,)).fetchall()
     conn.close()
     return users
+
+
+def set_daily_horoscope_enabled(user_id, enabled):
+    conn = get_conn()
+    conn.execute(
+        "UPDATE users SET daily_horoscope_enabled=? WHERE user_id=?",
+        (1 if enabled else 0, user_id)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_daily_horoscope_users(today):
+    conn = get_conn()
+    now = datetime.now().isoformat()
+    users = conn.execute("""
+        SELECT DISTINCT u.* FROM users u
+        JOIN subscriptions s ON u.user_id = s.user_id
+        WHERE s.expires_at > ?
+          AND u.is_banned=0
+          AND u.daily_horoscope_enabled=1
+          AND u.name IS NOT NULL
+          AND u.birthdate IS NOT NULL
+          AND (u.last_horoscope_sent IS NULL OR u.last_horoscope_sent<>?)
+    """, (now, today)).fetchall()
+    conn.close()
+    return users
+
+
+def mark_daily_horoscope_sent(user_id, today):
+    conn = get_conn()
+    conn.execute(
+        "UPDATE users SET last_horoscope_sent=? WHERE user_id=?",
+        (today, user_id)
+    )
+    conn.commit()
+    conn.close()
 
 # --- SUBSCRIPTIONS ---
 

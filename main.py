@@ -12,6 +12,7 @@ from handlers.start import router as start_router
 from handlers.reading import router as reading_router
 from handlers.subscription import router as subscription_router
 from handlers.admin import router as admin_router
+from services.horoscope import daily_horoscope_loop
 
 load_dotenv()
 
@@ -80,7 +81,12 @@ async def main():
     await setup_bot_commands(bot)
     await bot.delete_webhook(drop_pending_updates=True)
     await notify_admin_startup(bot)
-    await dp.start_polling(bot)
+    horoscope_task = asyncio.create_task(daily_horoscope_loop(bot))
+    try:
+        await dp.start_polling(bot)
+    finally:
+        horoscope_task.cancel()
+        await asyncio.gather(horoscope_task, return_exceptions=True)
 
 
 if __name__ == "__main__":

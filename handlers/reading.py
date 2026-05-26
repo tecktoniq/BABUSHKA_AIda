@@ -9,7 +9,7 @@ import logging
 from database.db import get_user, is_subscribed, has_trial, use_trial, save_reading, get_last_readings
 from data.cards import draw_cards
 from data.phrases import get, SHUFFLING, FIRST_CARD, SECOND_CARD, THIRD_CARD, VERDICT_INTRO, AFTER_READING
-from services.ai import interpret_card, get_verdict
+from services.ai import interpret_card, get_verdict, get_quick_card_answer
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -38,6 +38,10 @@ class ReadingState(StatesGroup):
     choosing_topic = State()
     waiting_question = State()
     showing_cards = State()
+
+
+class QuickReadingState(StatesGroup):
+    waiting_question = State()
 
 
 def topic_kb():
@@ -69,6 +73,7 @@ def verdict_kb():
 def after_reading_kb():
     kb = InlineKeyboardBuilder()
     kb.button(text="🔄 Поделиться раскладом", callback_data="share_reading")
+    kb.button(text="⚡ Быстрый ответ", callback_data="quick_reading")
     kb.button(text="🃏 Новый расклад", callback_data="start_reading")
     kb.button(text="◀️ Главное меню", callback_data="main_menu")
     kb.adjust(1)
@@ -81,6 +86,15 @@ def subscription_prompt_kb():
     kb.button(text="💫 Подписка месяц — 399 Stars", callback_data="buy_month")
     kb.button(text="🌟 3 месяца — 999 Stars (-20%)", callback_data="buy_3months")
     kb.button(text="◀️ Назад", callback_data="main_menu")
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def quick_after_kb():
+    kb = InlineKeyboardBuilder()
+    kb.button(text="⚡ Ещё вопрос", callback_data="quick_reading")
+    kb.button(text="🃏 Большой расклад", callback_data="start_reading")
+    kb.button(text="◀️ Главное меню", callback_data="main_menu")
     kb.adjust(1)
     return kb.as_markup()
 
@@ -131,6 +145,99 @@ async def start_reading_from_message(message: Message, state: FSMContext):
         reply_markup=topic_kb()
     )
     await state.set_state(ReadingState.choosing_topic)
+
+
+async def start_quick_reading_from_message(message: Message, state: FSMContext):
+    user = get_user(message.from_user.id)
+    if not user or not user["name"]:
+        await message.answer("Сначала пройди регистрацию!")
+        return
+
+    if not is_subscribed(message.from_user.id):
+        await message.answer(
+            "🔒 Быстрый ответ одной картой открыт только по подписке.\n\n"
+            "Это короткое гадание под конкретную ситуацию: ты задаёшь вопрос, Бабушка тянет одну карту и сразу говорит по сути.",
+            reply_markup=subscription_prompt_kb()
+        )
+        return
+
+    await message.answer(
+        "⚡ Быстрый ответ одной картой\n\n"
+        "Напиши вопрос или ситуацию одним сообщением. Можно про чувства, выбор, работу, деньги или то, что сейчас тревожит."
+    )
+    await state.set_state(QuickReadingState.waiting_question)
+
+
+@router.callback_query(F.data == "quick_reading")
+async def quick_reading(callback: CallbackQuery, state: FSMContext):
+    user = get_user(callback.from_user.id)
+    if not user or not user["name"]:
+        await callback.answer("Сначала пройди регистрацию!")
+        return
+
+    if not is_subscribed(callback.from_user.id):
+        await callback.message.answer(
+            "🔒 Быстрый ответ одной картой открыт только по подписке.",
+            reply_markup=subscription_prompt_kb()
+        )
+        await callback.answer()
+        return
+
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await callback.message.answer(
+        "⚡ Напиши вопрос или ситуацию одним сообщением, а Бабушка вытянет одну карту."
+    )
+    await state.set_state(QuickReadingState.waiting_question)
+    await callback.answer()
+
+
+@router.message(QuickReadingState.waiting_question)
+async def got_quick_question(message: Message, state: FSMContext):
+    question = message.text.strip()
+    if len(question) < 5:
+        await message.answer("Дай Бабушке чуть больше ниточки: напиши вопрос или ситуацию подробнее.")
+        return
+
+    user = get_user(message.from_user.id)
+    if not is_subscribed(message.from_user.id):
+        await message.answer(
+            "🔒 Быстрый ответ одной картой открыт только по подписке.",
+            reply_markup=subscription_prompt_kb()
+        )
+        await state.clear()
+        return
+
+    card = draw_cards(1)[0]
+    wait_msg = await message.answer("⚡ Бабушка тянет одну карту...")
+    await asyncio.sleep(0.7)
+    try:
+        await wait_msg.delete()
+    except Exception:
+        pass
+
+    reversed_label = "🔄 перевернутая" if card["is_reversed"] else "⬆️ прямая"
+    card_title = f"⚡ Быстрый ответ\n\n🃏 {card['name']}\n{reversed_label}"
+    try:
+        await message.answer_photo(photo=card["image_url"], caption=card_title)
+    except Exception as exc:
+        logger.warning("Failed to send quick card image %s: %s", card.get("image_url"), exc)
+        await message.answer(f"{card_title}\n\nКарта: {card['image_url']}")
+
+    thinking_msg = await message.answer("🔮 Бабушка AIda всматривается в карту...")
+    answer = await get_quick_card_answer(user["name"], question, card)
+    try:
+        await thinking_msg.delete()
+    except Exception:
+        pass
+
+    await message.answer(
+        f"🔮 Бабушка AIda говорит:\n\n{answer}",
+        reply_markup=quick_after_kb()
+    )
+    await state.clear()
 
 
 @router.callback_query(F.data.startswith("topic_"))

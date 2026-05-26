@@ -6,7 +6,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 import os
 
-from database.db import get_user, create_user, update_user, is_subscribed, has_trial
+from database.db import get_user, create_user, update_user, is_subscribed, has_trial, set_daily_horoscope_enabled
 from data.phrases import get, WELCOME
 from data.cards import get_zodiac, get_soul_card, get_soul_card_calculation, normalize_birthdate
 from services.ai import get_soul_card_analysis
@@ -22,6 +22,8 @@ BTN_MY_SUBSCRIPTION = "💎 Моя подписка"
 BTN_ABOUT = "📖 Что умеет Бабушка?"
 BTN_MY_DATA = "⚙️ Мои данные"
 BTN_ADMIN = "🛠 Админ-панель"
+BTN_QUICK = "⚡ Быстрый ответ"
+BTN_HOROSCOPE = "🌅 Гороскоп дня"
 
 
 class Onboarding(StatesGroup):
@@ -29,19 +31,42 @@ class Onboarding(StatesGroup):
     waiting_birthdate = State()
 
 
+def about_text() -> str:
+    return (
+        "🔮 Что умеет Бабушка AIda\n\n"
+        "Бесплатно:\n"
+        "🃏 3 пробных расклада на прошлое, настоящее и будущее\n"
+        "🔢 Карта судьбы по дате рождения\n"
+        "⚙️ Мои данные и реферальная ссылка\n\n"
+        "По подписке:\n"
+        "🃏 Безлимитные большие расклады с итогом Бабушки\n"
+        "⚡ Быстрый ответ одной картой под твою ситуацию\n"
+        "🌅 Гороскоп дня по запросу\n"
+        "🔔 Утренний гороскоп в 10:00 по Москве, если включить его в настройках\n"
+        "💎 Моя подписка и бонус +7 дней, когда приглашённый пользователь впервые оплатит Stars\n\n"
+        "Бесплатная версия даёт попробовать магию. Подписка открывает ежедневные подсказки и быстрые ответы, когда вопрос горит прямо сейчас."
+    )
+
+
 def reply_menu_kb(user_id: int | None = None):
     kb = ReplyKeyboardBuilder()
+    subscribed = bool(user_id and is_subscribed(user_id))
     kb.button(text=BTN_READING)
-    kb.button(text=BTN_SOUL)
-    if user_id and is_subscribed(user_id):
+    if subscribed:
+        kb.button(text=BTN_QUICK)
+        kb.button(text=BTN_HOROSCOPE)
+        kb.button(text=BTN_SOUL)
         kb.button(text=BTN_MY_SUBSCRIPTION)
     else:
+        kb.button(text=BTN_SOUL)
         kb.button(text=BTN_SUBSCRIBE)
     kb.button(text=BTN_ABOUT)
     kb.button(text=BTN_MY_DATA)
     if user_id == ADMIN_ID:
         kb.button(text=BTN_ADMIN)
-        kb.adjust(2, 2, 2)
+        kb.adjust(2, 2, 2, 2)
+    elif subscribed:
+        kb.adjust(2, 2, 2, 1)
     else:
         kb.adjust(2, 2, 1)
     return kb.as_markup(resize_keyboard=True)
@@ -148,20 +173,7 @@ async def got_birthdate(message: Message, state: FSMContext):
 async def about(callback: CallbackQuery):
     kb = InlineKeyboardBuilder()
     kb.button(text="◀️ Назад", callback_data="main_menu")
-    await callback.message.edit_text(
-        "🔮 Что умеет Бабушка AIda:\n\n"
-        "🃏 Расклад Таро — прошлое, настоящее, будущее\n"
-        "💕 На любовь и отношения\n"
-        "💰 На деньги и карьеру\n"
-        "🌙 На ситуацию в жизни\n"
-        "✍️ Твой личный вопрос\n\n"
-        "Только для подписчиков:\n"
-        "🌅 Персональный гороскоп каждое утро\n"
-        "🔢 Карта судьбы по дате рождения\n"
-        "📚 История твоих раскладов\n"
-        "🎯 Расклад Да/Нет",
-        reply_markup=kb.as_markup()
-    )
+    await callback.message.edit_text(about_text(), reply_markup=kb.as_markup())
 
 
 @router.callback_query(F.data == "main_menu")
@@ -202,10 +214,15 @@ async def send_my_data(target, user_id: int, edit: bool = False):
     kb.button(text="📅 Изменить дату рождения", callback_data="edit_birthdate")
     kb.button(text="🔢 Анализ карты судьбы", callback_data="soul_card_analysis")
     kb.button(text="🎁 Моя реферальная ссылка", callback_data="referral")
+    if is_subscribed(user_id):
+        daily_text = "🔕 Выключить утренний гороскоп" if user["daily_horoscope_enabled"] else "🔔 Включить утренний гороскоп"
+        kb.button(text=daily_text, callback_data="toggle_daily_horoscope")
     kb.button(text="◀️ Назад", callback_data="main_menu")
     kb.adjust(1)
 
-    sub_status = "✅ Активна" if is_subscribed(user_id) else f"❌ Нет (осталось пробных: {user['trial_left']})"
+    subscribed = is_subscribed(user_id)
+    sub_status = "✅ Активна" if subscribed else f"❌ Нет (осталось пробных: {user['trial_left']})"
+    horoscope_status = "включён" if user["daily_horoscope_enabled"] else "выключен"
 
     text = (
         f"⚙️ Твои данные:\n\n"
@@ -215,6 +232,8 @@ async def send_my_data(target, user_id: int, edit: bool = False):
         f"Карта судьбы: {soul_card_name} 🔮\n"
         f"Подписка: {sub_status}"
     )
+    if subscribed:
+        text += f"\nУтренний гороскоп: {horoscope_status} (10:00 МСК)"
     if edit:
         await target.edit_text(text, reply_markup=kb.as_markup())
     else:
@@ -226,10 +245,55 @@ async def my_data(callback: CallbackQuery):
     await send_my_data(callback.message, callback.from_user.id, edit=True)
 
 
+@router.callback_query(F.data == "toggle_daily_horoscope")
+async def toggle_daily_horoscope(callback: CallbackQuery):
+    user = get_user(callback.from_user.id)
+    if not user or not is_subscribed(callback.from_user.id):
+        await callback.answer("Это доступно только по подписке.", show_alert=True)
+        return
+    enabled = not bool(user["daily_horoscope_enabled"])
+    set_daily_horoscope_enabled(callback.from_user.id, enabled)
+    await callback.answer("Утренний гороскоп включён." if enabled else "Утренний гороскоп выключен.")
+    try:
+        await send_my_data(callback.message, callback.from_user.id, edit=True)
+    except Exception:
+        pass
+
+
 @router.message(F.text == BTN_READING)
 async def menu_reading(message: Message, state: FSMContext):
     from handlers.reading import start_reading_from_message
     await start_reading_from_message(message, state)
+
+
+@router.message(F.text == BTN_QUICK)
+async def menu_quick_reading(message: Message, state: FSMContext):
+    from handlers.reading import start_quick_reading_from_message
+    await start_quick_reading_from_message(message, state)
+
+
+@router.message(F.text == BTN_HOROSCOPE)
+async def menu_daily_horoscope(message: Message):
+    user = get_user(message.from_user.id)
+    if not user or not user["name"]:
+        await message.answer("Сначала пройди регистрацию!")
+        return
+    if not is_subscribed(message.from_user.id):
+        from handlers.reading import subscription_prompt_kb
+        await message.answer(
+            "🔒 Гороскоп дня открыт только по подписке.\n\n"
+            "Бабушка вытянет карту дня и даст персональную подсказку по твоему знаку.",
+            reply_markup=subscription_prompt_kb()
+        )
+        return
+
+    wait_msg = await message.answer("🌅 Бабушка смотрит, какой сегодня день...")
+    from services.horoscope import send_daily_horoscope
+    await send_daily_horoscope(message.bot, user, auto=False)
+    try:
+        await wait_msg.delete()
+    except Exception:
+        pass
 
 
 @router.message(F.text == BTN_SUBSCRIBE)
@@ -261,19 +325,7 @@ async def menu_my_subscription(message: Message):
 async def menu_about(message: Message):
     kb = InlineKeyboardBuilder()
     kb.button(text="◀️ Главное меню", callback_data="main_menu")
-    await message.answer(
-        "🔮 Что умеет Бабушка AIda:\n\n"
-        "🃏 Расклад Таро — прошлое, настоящее, будущее\n"
-        "💕 На любовь и отношения\n"
-        "💰 На деньги и карьеру\n"
-        "🌙 На ситуацию в жизни\n"
-        "✍️ На твой личный вопрос\n\n"
-        "Для подписчиков:\n"
-        "🌅 Персональный гороскоп\n"
-        "🔢 Анализ карты судьбы\n"
-        "📚 История раскладов",
-        reply_markup=kb.as_markup()
-    )
+    await message.answer(about_text(), reply_markup=kb.as_markup())
 
 
 @router.message(F.text == BTN_MY_DATA)
