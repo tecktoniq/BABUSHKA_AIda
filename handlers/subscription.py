@@ -80,6 +80,7 @@ async def successful_payment(message: Message):
 
     user = get_user(user_id)
     name = user["name"] if user and user["name"] else "дитя моё"
+    from handlers.start import reply_menu_kb
 
     if plan == "single":
         # Разовый расклад — добавляем 1 trial
@@ -92,14 +93,16 @@ async def successful_payment(message: Message):
         await message.answer(
             f"✨ Оплата получена, {name}!\n\n"
             f"Бабушка AIda открыла для тебя один расклад 🃏\n"
-            f"Нажми 'Сделать расклад' в меню 🔮"
+            f"Нажми 'Сделать расклад' в меню 🔮",
+            reply_markup=reply_menu_kb(user_id)
         )
     else:
         add_subscription(user_id, days)
         await message.answer(
             f"🌟 Подписка активирована, {name}!\n\n"
             f"Бабушка AIda теперь всегда с тобой 🔮\n"
-            f"Каждое утро тебя ждёт персональный гороскоп 🌅"
+            f"Каждое утро тебя ждёт персональный гороскоп 🌅",
+            reply_markup=reply_menu_kb(user_id)
         )
 
     reward = reward_referrer_after_payment(user_id, plan)

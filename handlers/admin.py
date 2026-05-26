@@ -1,8 +1,11 @@
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+import csv
+import io
 import os
+from datetime import datetime
 
 from database.db import (
     get_user, get_all_users, get_paying_users,
@@ -22,11 +25,62 @@ def admin_panel_kb():
     kb = InlineKeyboardBuilder()
     kb.button(text="📊 Статистика", callback_data="admin_stats")
     kb.button(text="👥 Пользователи", callback_data="admin_users")
+    kb.button(text="📤 Выгрузить пользователей", callback_data="admin_users_export")
     kb.button(text="💳 Платные", callback_data="admin_paying")
     kb.button(text="🔧 Команды", callback_data="admin_help")
     kb.button(text="◀️ Главное меню", callback_data="main_menu")
-    kb.adjust(2, 2, 1)
+    kb.adjust(2, 1, 2, 1)
     return kb.as_markup()
+
+
+def get_user_subscription_label(user_id: int) -> str:
+    if user_id == ADMIN_ID:
+        return "админ"
+    conn = get_conn()
+    now = datetime.now().isoformat()
+    sub = conn.execute(
+        "SELECT type, expires_at FROM subscriptions WHERE user_id=? AND expires_at>? ORDER BY expires_at DESC LIMIT 1",
+        (user_id, now)
+    ).fetchone()
+    conn.close()
+    if not sub:
+        return "нет"
+    return f"{sub['type']} до {sub['expires_at'][:10]}"
+
+
+def short_user_row(user) -> str:
+    username = f"@{user['username']}" if user["username"] else "без username"
+    name = user["name"] or "без имени"
+    sub = get_user_subscription_label(user["user_id"])
+    return f"• {name} | {username} | ID {user['user_id']} | {sub}"
+
+
+def build_users_csv() -> bytes:
+    users = get_all_users()
+    output = io.StringIO()
+    writer = csv.writer(output, delimiter=";")
+    writer.writerow([
+        "telegram_id",
+        "name",
+        "username",
+        "subscription",
+        "birthdate",
+        "zodiac",
+        "trial_left",
+        "registered_at",
+    ])
+    for user in users:
+        writer.writerow([
+            user["user_id"],
+            user["name"] or "",
+            user["username"] or "",
+            get_user_subscription_label(user["user_id"]),
+            user["birthdate"] or "",
+            user["zodiac"] or "",
+            user["trial_left"],
+            user["registered_at"] or "",
+        ])
+    return output.getvalue().encode("utf-8-sig")
 
 
 @router.callback_query(F.data == "admin_panel")
@@ -63,13 +117,33 @@ async def admin_users(callback: CallbackQuery):
         await callback.answer()
         return
     stats = get_stats()
+    users = get_all_users()
+    rows = "\n".join(short_user_row(user) for user in users[:15])
+    if not rows:
+        rows = "Пользователей пока нет."
     await callback.message.edit_text(
         f"👥 Пользователей: {stats['total']}\n"
         f"💳 Платных: {stats['paying']}\n\n"
+        f"{rows}\n\n"
         "Для карточки пользователя отправь:\n"
-        "/user 123456",
+        "/user 123456\n\n"
+        "Для CSV-файла:\n"
+        "/users_export",
         reply_markup=admin_panel_kb()
     )
+
+
+@router.callback_query(F.data == "admin_users_export")
+async def admin_users_export(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer()
+        return
+    csv_bytes = build_users_csv()
+    await callback.message.answer_document(
+        BufferedInputFile(csv_bytes, filename="babushka_users.csv"),
+        caption="📤 Выгрузка пользователей Бабушки AIda"
+    )
+    await callback.answer()
 
 
 @router.callback_query(F.data == "admin_paying")
@@ -95,7 +169,8 @@ async def admin_help(callback: CallbackQuery):
     await callback.message.edit_text(
         "🔧 Админ-команды:\n\n"
         "/stats — статистика\n"
-        "/users — количество пользователей\n"
+        "/users — список пользователей\n"
+        "/users_export — CSV выгрузка пользователей\n"
         "/paying — список платных\n"
         "/user 123456 — инфо о пользователе\n"
         "/give_sub 123456 30 — дать подписку\n"
@@ -127,9 +202,26 @@ async def cmd_users(message: Message):
     if not is_admin(message.from_user.id):
         return
     stats = get_stats()
+    users = get_all_users()
+    rows = "\n".join(short_user_row(user) for user in users[:20])
+    if not rows:
+        rows = "Пользователей пока нет."
     await message.answer(
         f"👥 Пользователей: {stats['total']}\n"
-        f"💳 Платных: {stats['paying']}"
+        f"💳 Платных: {stats['paying']}\n\n"
+        f"{rows}\n\n"
+        "Полная выгрузка: /users_export"
+    )
+
+
+@router.message(Command("users_export"))
+async def cmd_users_export(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+    csv_bytes = build_users_csv()
+    await message.answer_document(
+        BufferedInputFile(csv_bytes, filename="babushka_users.csv"),
+        caption="📤 Выгрузка пользователей Бабушки AIda"
     )
 
 
@@ -293,7 +385,8 @@ async def cmd_help_admin(message: Message):
     await message.answer(
         "🔧 Админ-команды:\n\n"
         "/stats — статистика\n"
-        "/users — кол-во пользователей\n"
+        "/users — список пользователей\n"
+        "/users_export — CSV выгрузка пользователей\n"
         "/paying — список платников\n"
         "/user 123456 — инфо о юзере\n"
         "/give_sub 123456 30 — дать подписку\n"

@@ -35,6 +35,7 @@ async def setup_bot_commands(bot: Bot):
                 BotCommand(command="start", description="Главное меню"),
                 BotCommand(command="stats", description="Статистика"),
                 BotCommand(command="users", description="Пользователи"),
+                BotCommand(command="users_export", description="Выгрузка пользователей"),
                 BotCommand(command="paying", description="Платные подписчики"),
                 BotCommand(command="user", description="Карточка пользователя"),
                 BotCommand(command="give_sub", description="Выдать подписку"),

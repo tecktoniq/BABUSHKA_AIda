@@ -3,7 +3,7 @@ from aiogram.types import FSInputFile, Message, CallbackQuery
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 import os
 
 from database.db import get_user, create_user, update_user, is_subscribed, has_trial
@@ -15,6 +15,14 @@ router = Router()
 ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
 WELCOME_IMAGE_PATH = "assets/AIDA.jpg"
 
+BTN_READING = "🃏 Сделать расклад"
+BTN_SOUL = "🔢 Анализ карты судьбы"
+BTN_SUBSCRIBE = "⭐ Открыть подписку"
+BTN_MY_SUBSCRIPTION = "💎 Моя подписка"
+BTN_ABOUT = "📖 Что умеет Бабушка?"
+BTN_MY_DATA = "⚙️ Мои данные"
+BTN_ADMIN = "🛠 Админ-панель"
+
 
 class Onboarding(StatesGroup):
     waiting_name = State()
@@ -25,13 +33,32 @@ def main_menu_kb(user_id: int | None = None):
     kb = InlineKeyboardBuilder()
     kb.button(text="🃏 Сделать расклад", callback_data="start_reading")
     kb.button(text="🔢 Анализ карты судьбы", callback_data="soul_card_analysis")
-    kb.button(text="⭐ Открыть подписку", callback_data="subscription")
+    if user_id and is_subscribed(user_id):
+        kb.button(text="💎 Моя подписка", callback_data="subscription")
+    else:
+        kb.button(text="⭐ Открыть подписку", callback_data="subscription")
     kb.button(text="📖 Что умеет бабушка?", callback_data="about")
     kb.button(text="⚙️ Мои данные", callback_data="my_data")
     if user_id == ADMIN_ID:
         kb.button(text="🔧 Админ-панель", callback_data="admin_panel")
     kb.adjust(1)
     return kb.as_markup()
+
+
+def reply_menu_kb(user_id: int | None = None):
+    kb = ReplyKeyboardBuilder()
+    kb.button(text=BTN_READING)
+    kb.button(text=BTN_SOUL)
+    if user_id and is_subscribed(user_id):
+        kb.button(text=BTN_MY_SUBSCRIPTION)
+    else:
+        kb.button(text=BTN_SUBSCRIBE)
+    kb.button(text=BTN_ABOUT)
+    kb.button(text=BTN_MY_DATA)
+    if user_id == ADMIN_ID:
+        kb.button(text=BTN_ADMIN)
+    kb.adjust(1)
+    return kb.as_markup(resize_keyboard=True)
 
 
 @router.message(CommandStart())
@@ -59,6 +86,10 @@ async def cmd_start(message: Message, state: FSMContext):
                 update_user(user_id, zodiac=zodiac)
         await message.answer(
             f"🔮 С возвращением, {user['name']}!\n\nБабушка AIda рада тебя видеть снова...",
+            reply_markup=reply_menu_kb(user_id)
+        )
+        await message.answer(
+            "Главное меню Бабушки AIda 🔮",
             reply_markup=main_menu_kb(user_id)
         )
         return
@@ -127,6 +158,10 @@ async def got_birthdate(message: Message, state: FSMContext):
         f"Карта судьбы: {soul_card['name']} 🔮\n\n"
         f"У тебя есть 3 бесплатных расклада.\n"
         f"Потом бабушка попросит немного звёздочек ⭐",
+        reply_markup=reply_menu_kb(message.from_user.id)
+    )
+    await message.answer(
+        "Главное меню Бабушки AIda 🔮",
         reply_markup=main_menu_kb(message.from_user.id)
     )
 
@@ -159,17 +194,19 @@ async def back_to_menu(callback: CallbackQuery):
     )
 
 
-@router.callback_query(F.data == "my_data")
-async def my_data(callback: CallbackQuery):
-    user = get_user(callback.from_user.id)
+async def send_my_data(target, user_id: int, edit: bool = False):
+    user = get_user(user_id)
     if not user or not user["name"]:
-        await callback.answer("Сначала пройди регистрацию!")
+        if edit:
+            await target.answer("Сначала пройди регистрацию!")
+        else:
+            await target.answer("Сначала пройди регистрацию!")
         return
     if user["birthdate"]:
         zodiac = get_zodiac(user["birthdate"])
         if zodiac != user["zodiac"]:
-            update_user(callback.from_user.id, zodiac=zodiac)
-            user = get_user(callback.from_user.id)
+            update_user(user_id, zodiac=zodiac)
+            user = get_user(user_id)
 
     soul_card_name = "не определена"
     if user["soul_card"] is not None:
@@ -187,16 +224,91 @@ async def my_data(callback: CallbackQuery):
     kb.button(text="◀️ Назад", callback_data="main_menu")
     kb.adjust(1)
 
-    sub_status = "✅ Активна" if is_subscribed(callback.from_user.id) else f"❌ Нет (осталось пробных: {user['trial_left']})"
+    sub_status = "✅ Активна" if is_subscribed(user_id) else f"❌ Нет (осталось пробных: {user['trial_left']})"
 
-    await callback.message.edit_text(
+    text = (
         f"⚙️ Твои данные:\n\n"
         f"Имя: {user['name']}\n"
         f"Дата рождения: {user['birthdate']}\n"
         f"Знак зодиака: {user['zodiac']}\n"
         f"Карта судьбы: {soul_card_name} 🔮\n"
-        f"Подписка: {sub_status}",
+        f"Подписка: {sub_status}"
+    )
+    if edit:
+        await target.edit_text(text, reply_markup=kb.as_markup())
+    else:
+        await target.answer(text, reply_markup=kb.as_markup())
+
+
+@router.callback_query(F.data == "my_data")
+async def my_data(callback: CallbackQuery):
+    await send_my_data(callback.message, callback.from_user.id, edit=True)
+
+
+@router.message(F.text == BTN_READING)
+async def menu_reading(message: Message, state: FSMContext):
+    from handlers.reading import start_reading_from_message
+    await start_reading_from_message(message, state)
+
+
+@router.message(F.text == BTN_SUBSCRIBE)
+async def menu_subscription(message: Message):
+    from handlers.subscription import subscription_kb
+    user = get_user(message.from_user.id)
+    name = user["name"] if user and user["name"] else "дитя моё"
+    await message.answer(
+        f"✨ Открой всю силу Бабушки AIda, {name}!\n\n"
+        f"🃏 Больше раскладов с живым толкованием\n"
+        f"🔢 Карта судьбы и личные подсказки\n"
+        f"📚 История твоих раскладов\n\n"
+        f"Выбери подходящий вариант:",
+        reply_markup=subscription_kb()
+    )
+
+
+@router.message(F.text == BTN_MY_SUBSCRIPTION)
+async def menu_my_subscription(message: Message):
+    from handlers.subscription import subscription_kb
+    await message.answer(
+        "💎 Твоя подписка активна.\n\n"
+        "Если хочешь продлить её заранее или докупить отдельный расклад, выбери вариант ниже:",
+        reply_markup=subscription_kb()
+    )
+
+
+@router.message(F.text == BTN_ABOUT)
+async def menu_about(message: Message):
+    kb = InlineKeyboardBuilder()
+    kb.button(text="◀️ Главное меню", callback_data="main_menu")
+    await message.answer(
+        "🔮 Что умеет Бабушка AIda:\n\n"
+        "🃏 Расклад Таро — прошлое, настоящее, будущее\n"
+        "💕 На любовь и отношения\n"
+        "💰 На деньги и карьеру\n"
+        "🌙 На ситуацию в жизни\n"
+        "✍️ На твой личный вопрос\n\n"
+        "Для подписчиков:\n"
+        "🌅 Персональный гороскоп\n"
+        "🔢 Анализ карты судьбы\n"
+        "📚 История раскладов",
         reply_markup=kb.as_markup()
+    )
+
+
+@router.message(F.text == BTN_MY_DATA)
+async def menu_my_data(message: Message):
+    await send_my_data(message, message.from_user.id)
+
+
+@router.message(F.text == BTN_ADMIN)
+async def menu_admin(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    from handlers.admin import admin_panel_kb
+    await message.answer(
+        "🛠 Админ-панель Бабушки AIda\n\n"
+        "Быстрые действия доступны кнопками. Команды с ID можно отправлять текстом.",
+        reply_markup=admin_panel_kb()
     )
 
 
@@ -220,11 +332,13 @@ async def referral(callback: CallbackQuery):
     )
 
 
-@router.callback_query(F.data == "soul_card_analysis")
-async def soul_card_analysis(callback: CallbackQuery):
-    user = get_user(callback.from_user.id)
+async def send_soul_card_analysis(target, user_id: int, edit: bool = False):
+    user = get_user(user_id)
     if not user or not user["name"] or not user["birthdate"]:
-        await callback.answer("Сначала пройди регистрацию!")
+        if edit:
+            await target.answer("Сначала пройди регистрацию!")
+        else:
+            await target.answer("Сначала пройди регистрацию!")
         return
 
     calculation = get_soul_card_calculation(user["birthdate"])
@@ -232,7 +346,7 @@ async def soul_card_analysis(callback: CallbackQuery):
     digits_text = " + ".join(str(digit) for digit in calculation["digits"])
     steps_text = " → ".join(str(step) for step in calculation["steps"])
 
-    await callback.message.edit_text(
+    intro_text = (
         "🔢 Считаю карту судьбы...\n\n"
         f"Дата: {calculation['birthdate']}\n"
         f"Цифры: {digits_text}\n"
@@ -240,6 +354,10 @@ async def soul_card_analysis(callback: CallbackQuery):
         f"Карта: {soul_card['name']} 🔮\n\n"
         "Сейчас Бабушка AIda раскроет её смысл."
     )
+    if edit:
+        await target.edit_text(intro_text)
+    else:
+        await target.answer(intro_text)
 
     analysis = await get_soul_card_analysis(
         name=user["name"],
@@ -251,7 +369,7 @@ async def soul_card_analysis(callback: CallbackQuery):
     kb = InlineKeyboardBuilder()
     kb.button(text="◀️ Главное меню", callback_data="main_menu")
 
-    await callback.message.answer(
+    await target.answer(
         f"🔢 Карта судьбы: {soul_card['name']}\n\n"
         f"Логика расчёта:\n"
         f"{digits_text} = {calculation['first_sum']}\n"
@@ -259,3 +377,13 @@ async def soul_card_analysis(callback: CallbackQuery):
         f"🔮 Бабушка AIda говорит:\n\n{analysis}",
         reply_markup=kb.as_markup()
     )
+
+
+@router.callback_query(F.data == "soul_card_analysis")
+async def soul_card_analysis(callback: CallbackQuery):
+    await send_soul_card_analysis(callback.message, callback.from_user.id, edit=True)
+
+
+@router.message(F.text == BTN_SOUL)
+async def menu_soul_card_analysis(message: Message):
+    await send_soul_card_analysis(message, message.from_user.id)

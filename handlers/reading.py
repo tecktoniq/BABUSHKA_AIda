@@ -110,6 +110,29 @@ async def start_reading(callback: CallbackQuery, state: FSMContext):
     await state.set_state(ReadingState.choosing_topic)
 
 
+async def start_reading_from_message(message: Message, state: FSMContext):
+    user = get_user(message.from_user.id)
+    if not user or not user["name"]:
+        await message.answer("Сначала пройди регистрацию!")
+        return
+
+    if not is_subscribed(message.from_user.id) and not has_trial(message.from_user.id):
+        await message.answer(
+            "🔒 Бабушка видит больше...\n\n"
+            "Твои бесплатные расклады закончились, дитя моё.\n"
+            "Открой подписку, чтобы продолжить 🔮",
+            reply_markup=subscription_prompt_kb()
+        )
+        return
+
+    await message.answer(
+        "О чём тревожится твоё сердце? 🔮\n\n"
+        "Выбери тему расклада:",
+        reply_markup=topic_kb()
+    )
+    await state.set_state(ReadingState.choosing_topic)
+
+
 @router.callback_query(F.data.startswith("topic_"))
 async def choose_topic(callback: CallbackQuery, state: FSMContext):
     topic_key = callback.data.replace("topic_", "")
