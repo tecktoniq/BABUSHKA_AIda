@@ -7,8 +7,8 @@ services:
       BOT_TOKEN: ${BOT_TOKEN}
       ADMIN_ID: ${ADMIN_ID}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
-      MODEL: ${MODEL:-openai/gpt-4.1-mini}
-      FALLBACK_MODEL: ${FALLBACK_MODEL:-openai/gpt-4.1-nano}
+      MODEL: ${MODEL:-anthropic/claude-haiku-4-5}
+      FALLBACK_MODEL: ${FALLBACK_MODEL:-openai/gpt-4.1-mini}
       OPENROUTER_TIMEOUT: ${OPENROUTER_TIMEOUT:-12}
     volumes:
       - ./data_db:/app/data_db

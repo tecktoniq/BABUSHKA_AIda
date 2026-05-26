@@ -8,7 +8,7 @@ load_dotenv()
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 MODEL = os.getenv("MODEL", "anthropic/claude-haiku-4-5")
-FALLBACK_MODEL = os.getenv("FALLBACK_MODEL", "openrouter/free")
+FALLBACK_MODEL = os.getenv("FALLBACK_MODEL", "openai/gpt-4.1-mini")
 OPENROUTER_TIMEOUT = float(os.getenv("OPENROUTER_TIMEOUT", "12"))
 logger = logging.getLogger(__name__)
 
