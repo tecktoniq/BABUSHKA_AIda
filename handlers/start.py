@@ -29,22 +29,6 @@ class Onboarding(StatesGroup):
     waiting_birthdate = State()
 
 
-def main_menu_kb(user_id: int | None = None):
-    kb = InlineKeyboardBuilder()
-    kb.button(text="🃏 Сделать расклад", callback_data="start_reading")
-    kb.button(text="🔢 Анализ карты судьбы", callback_data="soul_card_analysis")
-    if user_id and is_subscribed(user_id):
-        kb.button(text="💎 Моя подписка", callback_data="subscription")
-    else:
-        kb.button(text="⭐ Открыть подписку", callback_data="subscription")
-    kb.button(text="📖 Что умеет бабушка?", callback_data="about")
-    kb.button(text="⚙️ Мои данные", callback_data="my_data")
-    if user_id == ADMIN_ID:
-        kb.button(text="🔧 Админ-панель", callback_data="admin_panel")
-    kb.adjust(1)
-    return kb.as_markup()
-
-
 def reply_menu_kb(user_id: int | None = None):
     kb = ReplyKeyboardBuilder()
     kb.button(text=BTN_READING)
@@ -57,7 +41,9 @@ def reply_menu_kb(user_id: int | None = None):
     kb.button(text=BTN_MY_DATA)
     if user_id == ADMIN_ID:
         kb.button(text=BTN_ADMIN)
-    kb.adjust(1)
+        kb.adjust(2, 2, 2)
+    else:
+        kb.adjust(2, 2, 1)
     return kb.as_markup(resize_keyboard=True)
 
 
@@ -87,10 +73,6 @@ async def cmd_start(message: Message, state: FSMContext):
         await message.answer(
             f"🔮 С возвращением, {user['name']}!\n\nБабушка AIda рада тебя видеть снова...",
             reply_markup=reply_menu_kb(user_id)
-        )
-        await message.answer(
-            "Главное меню Бабушки AIda 🔮",
-            reply_markup=main_menu_kb(user_id)
         )
         return
 
@@ -160,10 +142,6 @@ async def got_birthdate(message: Message, state: FSMContext):
         f"Потом бабушка попросит немного звёздочек ⭐",
         reply_markup=reply_menu_kb(message.from_user.id)
     )
-    await message.answer(
-        "Главное меню Бабушки AIda 🔮",
-        reply_markup=main_menu_kb(message.from_user.id)
-    )
 
 
 @router.callback_query(F.data == "about")
@@ -189,8 +167,11 @@ async def about(callback: CallbackQuery):
 @router.callback_query(F.data == "main_menu")
 async def back_to_menu(callback: CallbackQuery):
     await callback.message.edit_text(
-        "🔮 Главное меню Бабушки AIda",
-        reply_markup=main_menu_kb(callback.from_user.id)
+        "🔮 Главное меню Бабушки AIda\n\nВыбери действие на клавиатуре ниже."
+    )
+    await callback.message.answer(
+        "Кнопки меню уже под рукой, дитя моё.",
+        reply_markup=reply_menu_kb(callback.from_user.id)
     )
 
 
